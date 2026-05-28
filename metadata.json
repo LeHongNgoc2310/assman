@@ -1,0 +1,6 @@
+{
+  "name": "AssMan",
+  "description": "Personal asset management app focusing on consolidated portfolio tracking across multiple brokerages (SSI, VPS, TCBS, MBS, Pinetree).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
