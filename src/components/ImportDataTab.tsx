@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { BrokerageAccount, PortfolioPosition, AssetType } from '../types';
 import { csvTemplates, formatVND, formatShares } from '../utils';
 import { 
@@ -35,8 +35,15 @@ export default function ImportDataTab({
   onImportPositions,
   onAddHistoryItem,
 }: ImportDataTabProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'ocr' | 'csv' | 'manual'>('ocr');
+  const [activeSubTab, setActiveSubTab] = useState<'ocr' | 'csv' | 'manual' | 'api'>('ocr');
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
+
+  // Keep selected account sync when a new account is registered or accounts list changes
+  useEffect(() => {
+    if (accounts.length > 0 && (!selectedAccountId || !accounts.map(a => a.id).includes(selectedAccountId))) {
+      setSelectedAccountId(accounts[accounts.length - 1].id);
+    }
+  }, [accounts]);
 
   // 1. OCR screenshot states
   const [screenshotRaw, setScreenshotRaw] = useState<string | null>(null);
@@ -181,7 +188,6 @@ export default function ImportDataTab({
     setPreviewPositions([]);
     setScreenshotRaw(null);
     setCsvContent('');
-    alert(`Import thành công ${mappedToImport.length} mã vào tài khoản chứng khoán!`);
   };
 
   // Parser: Simple spreadsheet / CSV text parser
@@ -429,6 +435,25 @@ export default function ImportDataTab({
                     <p className="text-[10px] text-zinc-500 mt-0.5">Nhập mã tài sản thủ công bất kỳ</p>
                   </div>
                 </button>
+
+                <button
+                  id="tab-lane-api"
+                  onClick={() => { setActiveSubTab('api'); setPreviewPositions([]); }}
+                  className={`w-full flex items-center space-x-3 p-3 rounded-xl transition cursor-pointer text-left ${
+                    activeSubTab === 'api' 
+                      ? 'bg-amber-500/10 text-amber-400 border-l-4 border-amber-500' 
+                      : 'hover:bg-zinc-850/30 text-zinc-450 border-l-4 border-transparent'
+                  }`}
+                >
+                  <Zap className="h-4 w-4 text-amber-500 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <p className="font-bold text-xs uppercase tracking-wide truncate">Kết nối qua API bảo mật</p>
+                      <span className="text-[8px] bg-amber-500/20 text-amber-300 px-1 border border-amber-500/20 font-bold font-mono rounded shrink-0 ml-1">Phase 2</span>
+                    </div>
+                    <p className="text-[10px] text-zinc-550 mt-0.5 truncate">Đồng bộ tự động realtime từ MBS, SSI, VPS...</p>
+                  </div>
+                </button>
               </div>
             </div>
 
@@ -574,7 +599,7 @@ export default function ImportDataTab({
 
                 <form onSubmit={handleAddManualPosition} className="space-y-3">
                   <div className="space-y-1">
-                    <label className="font-semibold text-zinc-400">Mã chứng khoán</label>
+                    <label className="font-semibold text-zinc-300 block">Mã chứng khoán</label>
                     <input
                       id="manual-symbol-input"
                       type="text"
@@ -582,13 +607,13 @@ export default function ImportDataTab({
                       required
                       value={manualSymbol}
                       onChange={(e) => setManualSymbol(e.target.value)}
-                      className="w-full px-3 py-1.5 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-bold text-center uppercase"
+                      className="w-full px-3 py-1.5 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-bold text-center uppercase text-xs"
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="font-semibold text-zinc-400">Số lượng</label>
+                      <label className="font-semibold text-zinc-300 block">Số lượng</label>
                       <input
                         id="manual-qty-input"
                         type="number"
@@ -596,11 +621,11 @@ export default function ImportDataTab({
                         required
                         value={manualQty || ''}
                         onChange={(e) => setManualQty(Number(e.target.value))}
-                        className="w-full px-3 py-1.5 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono text-right"
+                        className="w-full px-3 py-1.5 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono text-right text-xs"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="font-semibold text-zinc-400">Giá vốn (VND)</label>
+                      <label className="font-semibold text-zinc-300 block">Giá vốn (VND)</label>
                       <input
                         id="manual-price-input"
                         type="number"
@@ -608,7 +633,7 @@ export default function ImportDataTab({
                         required
                         value={manualPrice || ''}
                         onChange={(e) => setManualPrice(Number(e.target.value))}
-                        className="w-full px-3 py-1.5 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono text-right"
+                        className="w-full px-3 py-1.5 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono text-right text-xs"
                       />
                     </div>
                   </div>
@@ -616,7 +641,7 @@ export default function ImportDataTab({
                   <button
                     id="add-manual-list-btn"
                     type="submit"
-                    className="w-full py-2 bg-purple-500 hover:bg-purple-450 text-black rounded-xl font-bold cursor-pointer transition flex items-center justify-center space-x-1.5 select-none"
+                    className="w-full py-2 bg-purple-500 hover:bg-purple-450 text-black rounded-xl font-bold cursor-pointer transition flex items-center justify-center space-x-1.5 select-none text-xs"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Lên danh sách preview</span>
@@ -624,150 +649,282 @@ export default function ImportDataTab({
                 </form>
               </div>
             )}
-          </div>
 
-          {/* Table Preview and Import trigger (Right Panel - takes 2 cols) */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="bg-[#09090b] border border-zinc-800/80 rounded-2xl shadow-xs overflow-hidden pb-4">
-              
-              <div className="px-6 py-4 border-b border-zinc-850 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-900/20">
-                <div>
-                  <h4 className="font-bold text-zinc-200 flex items-center space-x-2">
-                    <ClipboardCheck className="h-4 w-4 text-emerald-450" />
-                    <span>Xem trước dữ liệu khớp ({previewPositions.length} mã)</span>
-                  </h4>
-                  <p className="text-[10px] text-zinc-500 mt-1">Review, sửa lỗi nhận diện của AI hoặc sai lệch cột trước khi lưu vào danh mục.</p>
+            {activeSubTab === 'api' && (
+              <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center space-x-1.5 text-amber-400 font-bold border-b border-zinc-850 pb-2 select-none">
+                  <Zap className="h-4 w-4 shrink-0" />
+                  <span>Cổng đồng bộ API thực tế</span>
                 </div>
+                
+                <p className="text-zinc-400 leading-relaxed text-[11px]">
+                  Giải pháp tích hợp giúp Assetly trực tiếp truy vấn số dư sở hữu thực tế từ các CTCK lớn (VNDIRECT, SSI, VPS, TCBS...). Loại bỏ hoàn toàn sự bất tiện khi phải tải file sao kê hay chụp hình thủ công.
+                </p>
 
-                <div className="flex items-center space-x-4 select-none">
-                  {/* Select Import Mode (Add or Overwrite positions) */}
-                  <div className="flex items-center space-x-1 border border-zinc-800 rounded-lg p-0.5 bg-zinc-950 text-[10px] font-semibold">
-                    <button
-                      id="import-mode-add"
-                      onClick={() => setImportMode('add')}
-                      className={`px-2.5 py-1 rounded-sm transition cursor-pointer ${importMode === 'add' ? 'bg-zinc-800 text-emerald-400 font-bold' : 'text-zinc-500'}`}
-                    >
-                      Cộng dồn vị thế
-                    </button>
-                    <button
-                      id="import-mode-overwrite"
-                      onClick={() => setImportMode('overwrite')}
-                      className={`px-2.5 py-1 rounded-sm transition cursor-pointer ${importMode === 'overwrite' ? 'bg-zinc-800 text-emerald-400 font-bold' : 'text-zinc-500'}`}
-                      title="Ghi đè bằng dữ liệu mới nhất (Xóa cũ)"
-                    >
-                      Bản ghi mới nhất
-                    </button>
+                <div className="space-y-4 pt-1">
+                  <div className="bg-zinc-950 p-3.5 rounded-xl border border-zinc-850 space-y-2">
+                    <p className="font-bold text-[9px] text-zinc-450 uppercase tracking-widest font-mono select-none">Cam kết an toàn SSI Webhook</p>
+                    <div className="space-y-1.5 text-zinc-550 text-[10px] leading-relaxed">
+                      <p className="flex items-start space-x-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>Quyền truy cập chỉ đọc (Read-Only Compliance)</span>
+                      </p>
+                      <p className="flex items-start space-x-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>Tuyệt đối không có lệnh giao dịch/chuyển tiền</span>
+                      </p>
+                      <p className="flex items-start space-x-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>Mã hóa bảo mật đầu cuối HTTPS & AES-256</span>
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
+            )}
+          </div>
 
-              {/* Grid content draft */}
-              {previewPositions.length > 0 ? (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-zinc-800/50">
-                      <thead>
-                        <tr className="bg-zinc-900/10 text-zinc-550 font-mono text-[9px] uppercase tracking-wider text-right">
-                          <th className="px-6 py-2.5 text-left">Mã chứng khoán</th>
-                          <th className="px-6 py-2.5">Số lượng cổ phiếu</th>
-                          <th className="px-6 py-2.5">Giá mua gốc (VND)</th>
-                          <th className="px-6 py-2.5 text-center">Xóa</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-850/60 font-sans">
-                        {previewPositions.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-zinc-850/30 transition">
-                            <td className="px-6 py-2 whitespace-nowrap">
-                              <input
-                                id={`preview-sym-${idx}`}
-                                type="text"
-                                value={item.stockSymbol}
-                                onChange={(e) => handleUpdateDraftValue(idx, 'stockSymbol', e.target.value)}
-                                className="px-1.5 py-1 text-center font-bold font-mono bg-zinc-950 border border-zinc-800 rounded-md focus:border-emerald-500 focus:bg-zinc-900 uppercase w-24 text-xs text-zinc-100"
-                              />
-                            </td>
-                            <td className="px-6 py-2 text-right whitespace-nowrap">
-                              <input
-                                id={`preview-qty-${idx}`}
-                                type="number"
-                                min="1"
-                                value={item.quantity || ''}
-                                onChange={(e) => handleUpdateDraftValue(idx, 'quantity', e.target.value)}
-                                className="px-1.5 py-1 text-right font-mono bg-zinc-950 border border-zinc-800 rounded-md focus:border-teal-500 focus:bg-zinc-900 w-24 text-xs text-zinc-100"
-                              />
-                            </td>
-                            <td className="px-6 py-2 text-right whitespace-nowrap">
-                              <div className="inline-flex flex-col items-end">
-                                <input
-                                  id={`preview-price-${idx}`}
-                                  type="number"
-                                  min="0"
-                                  value={item.averageCostPrice || ''}
-                                  onChange={(e) => handleUpdateDraftValue(idx, 'averageCostPrice', e.target.value)}
-                                  className="px-1.5 py-1 text-right font-mono bg-zinc-950 border border-zinc-800 rounded-md focus:border-teal-500 focus:bg-zinc-900 w-32 text-xs text-zinc-100"
-                                />
-                                <span className="text-[10px] text-zinc-500 mt-1 font-mono font-medium">
-                                  ≈ {formatVND(item.averageCostPrice)}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-2 text-center whitespace-nowrap">
-                              <button
-                                id={`delete-draft-${idx}`}
-                                onClick={() => handleDeleteDraftItem(idx)}
-                                className="text-zinc-550 hover:text-red-400 p-1.5 rounded-md hover:bg-zinc-850 cursor-pointer transition"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+          {/* Table Preview and Import trigger (Right Panel - takes 2 cols) */}
+          <div className="lg:col-span-2 space-y-4 animate-fade-in text-xs">
+            {activeSubTab === 'api' ? (
+              <div className="bg-[#09090b] border border-zinc-800/80 rounded-2xl p-6 md:p-8 shadow-xs border-dashed border-amber-500/20 relative overflow-hidden space-y-6">
+                {/* Background ambient light */}
+                <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
+                
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full uppercase">
+                      Tính năng phát triển • Phase 2 MVP
+                    </span>
+                    <h4 className="text-base font-bold text-zinc-150 flex items-center space-x-2 pt-2">
+                      <Zap className="h-4.5 w-4.5 text-amber-400" />
+                      <span>Kết Nối Tài Khoản Trực Tiếp Qua API Bảo Mật</span>
+                    </h4>
+                    <p className="text-xs text-zinc-500">Thiết lập kết nối an toàn để hệ thống tự động cập nhật danh mục của bạn sau 15h00 hàng ngày.</p>
                   </div>
-
-                  {validationWarnings.length > 0 && (
-                    <div className="m-4 p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1">
-                      <p className="font-bold text-amber-400 flex items-center space-x-1 text-[11px]">
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                        <span>Các cảnh báo từ hệ thống AI:</span>
-                      </p>
-                      {validationWarnings.map((war, wIdx) => (
-                        <p key={wIdx} className="text-[10px] text-amber-500/80 pl-4 list-disc">{war}</p>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Confirmed Import Trigger banner */}
-                  <div className="mt-6 px-6 flex justify-end space-x-3 select-none">
-                    <button
-                      id="cancel-draft-btn"
-                      onClick={() => setPreviewPositions([])}
-                      className="px-4 py-2 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold rounded-xl cursor-pointer transition border border-zinc-700"
-                    >
-                      Xóa bảng Preview
-                    </button>
-
-                    <button
-                      id="commit-import-btn"
-                      onClick={handleProceedImport}
-                      className="px-5 py-2 bg-emerald-500 hover:bg-emerald-450 text-black font-extrabold rounded-xl cursor-pointer transition flex items-center space-x-2"
-                    >
-                      <Check className="h-4 w-4 stroke-[2.5]" />
-                      <span>Xác nhận Nạp Tài sản</span>
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="py-24 text-center text-zinc-650">
-                  <ClipboardCheck className="h-10 w-10 text-zinc-800 mx-auto mb-2" />
-                  <p className="font-semibold text-zinc-400">Bộ đệm preview trống</p>
-                  <p className="text-[10px] text-zinc-550 mt-1 max-w-sm mx-auto">
-                    Hãy lựa chọn phương thức nạp dữ liệu ở bảng điều khiển bên trái (Ảnh chụp nhanh, Copy-Paste, hoặc Nhập trực tiếp) để nạp bảng preview tại đây.
-                  </p>
                 </div>
-              )}
-            </div>
+
+                <div className="border border-zinc-850 bg-zinc-950/45 rounded-2xl p-6 space-y-6 relative opacity-60">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div className="space-y-1">
+                      <label className="text-zinc-100 font-semibold select-none flex items-center space-x-1">
+                        <span>Tài khoản đích</span>
+                        <span className="text-[9px] text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/15">Active</span>
+                      </label>
+                      <select
+                        value={selectedAccountId}
+                        onChange={(e) => setSelectedAccountId(e.target.value)}
+                        className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-300 text-xs font-semibold cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                      >
+                        {accounts.map(a => (
+                          <option key={a.id} value={a.id} className="bg-zinc-950 text-zinc-200">
+                            {a.name} ({a.broker})
+                          </option>
+                        ))}
+                        {accounts.length === 0 && <option value="">Chọn tài khoản</option>}
+                      </select>
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-zinc-400 font-semibold font-sans select-none">Chọn Cổng kết nối (API Gateway)</label>
+                      <select disabled className="w-full px-3 py-2 bg-zinc-950 border border-zinc-850 rounded-xl text-zinc-500 cursor-not-allowed font-semibold select-none text-xs">
+                        <option>SSI iBoard Open API Connection</option>
+                        <option>VPS Securities Datafeed</option>
+                        <option>TCBS TCInvest Connector</option>
+                        <option>MBS Mobile Trading Webhook</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-zinc-400 font-semibold select-none font-mono">Client ID Key</label>
+                      <input 
+                        type="password" 
+                        disabled 
+                        value="••••••••••••••••••••••••" 
+                        className="w-full px-3 py-1.5 bg-zinc-950 border border-zinc-850 rounded-xl text-zinc-650 cursor-not-allowed font-mono text-xs" 
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-zinc-400 font-semibold select-none font-mono">Client Secret Key</label>
+                      <input 
+                        type="password" 
+                        disabled 
+                        value="••••••••••••••••••••••••" 
+                        className="w-full px-3 py-1.5 bg-zinc-950 border border-zinc-850 rounded-xl text-zinc-650 cursor-not-allowed font-mono text-xs" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900/50 p-4 rounded-xl border border-zinc-850 text-[10px] text-zinc-500 space-y-1.5 select-none">
+                    <p className="font-bold text-zinc-400 flex items-center space-x-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      <span>Thông tin giấy phép kết nối:</span>
+                    </p>
+                    <p className="leading-relaxed">Các khóa API của công ty chứng khoán được bảo mật bằng mã hóa bất đối xứng khóa công khai và lưu trữ trực tiếp trên thiết bị (Local Sandbox Private Vault) của bạn. Hệ thống cam kết không bao giờ thu thập hay lưu lại thông tin này trên server.</p>
+                  </div>
+
+                  {/* Blurred overlay with full CTA */}
+                  <div className="absolute inset-0 bg-zinc-950/20 backdrop-blur-[1.5px] rounded-2xl flex flex-col items-center justify-center p-6 text-center">
+                    <div className="bg-zinc-900/90 border border-zinc-800 p-6 rounded-2xl max-w-sm shadow-xl space-y-3.5">
+                      <div className="w-12 h-12 rounded-full bg-amber-550/10 border border-amber-500/20 flex items-center justify-center mx-auto">
+                        <Zap className="h-6 w-6 text-amber-400 animate-pulse" />
+                      </div>
+                      <div>
+                        <h5 className="font-bold text-zinc-200">Đồng bộ tự động API (Phase 2)</h5>
+                        <p className="text-[10px] text-zinc-500 mt-1.5 leading-relaxed">
+                          Tính năng kết nối sâu này hiện đang được thử nghiệm bảo mật (Penetration Test) và phối hợp tích hợp cổng kết nối với các công ty chứng khoán lớn. Cùng chờ đón ở quý tiếp theo!
+                        </p>
+                      </div>
+                      <button disabled className="px-5 py-1.5 bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30 rounded-lg cursor-not-allowed select-none">
+                        Nhận thông báo khi ra mắt
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-[#09090b] border border-zinc-800/80 rounded-2xl shadow-xs overflow-hidden pb-4">
+                
+                <div className="px-6 py-4 border-b border-zinc-850 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-900/20">
+                  <div>
+                    <h4 className="font-bold text-zinc-200 flex items-center space-x-2">
+                      <ClipboardCheck className="h-4 w-4 text-emerald-450" />
+                      <span>Xem trước dữ liệu khớp ({previewPositions.length} mã)</span>
+                    </h4>
+                    <p className="text-[10px] text-zinc-500 mt-1">Review, sửa lỗi nhận diện của AI hoặc sai lệch cột trước khi lưu vào danh mục.</p>
+                  </div>
+
+                  <div className="flex items-center space-x-4 select-none">
+                    {/* Select Import Mode (Add or Overwrite positions) */}
+                    <div className="flex items-center space-x-1 border border-zinc-800 rounded-lg p-0.5 bg-zinc-950 text-[10px] font-semibold">
+                      <button
+                        id="import-mode-add"
+                        onClick={() => setImportMode('add')}
+                        className={`px-2.5 py-1 rounded-sm transition cursor-pointer ${importMode === 'add' ? 'bg-zinc-800 text-emerald-400 font-bold' : 'text-zinc-500'}`}
+                      >
+                        Cộng dồn vị thế
+                      </button>
+                      <button
+                        id="import-mode-overwrite"
+                        onClick={() => setImportMode('overwrite')}
+                        className={`px-2.5 py-1 rounded-sm transition cursor-pointer ${importMode === 'overwrite' ? 'bg-zinc-800 text-emerald-400 font-bold' : 'text-zinc-500'}`}
+                        title="Ghi đè bằng dữ liệu mới nhất (Xóa cũ)"
+                      >
+                        Bản ghi mới nhất
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Grid content draft */}
+                {previewPositions.length > 0 ? (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-zinc-800/50">
+                        <thead>
+                          <tr className="bg-zinc-900/10 text-zinc-550 font-mono text-[9px] uppercase tracking-wider text-right">
+                            <th className="px-6 py-2.5 text-left">Mã chứng khoán</th>
+                            <th className="px-6 py-2.5">Số lượng cổ phiếu</th>
+                            <th className="px-6 py-2.5">Giá mua gốc (VND)</th>
+                            <th className="px-6 py-2.5 text-center">Xóa</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-850/60 font-sans">
+                          {previewPositions.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-zinc-850/30 transition">
+                              <td className="px-6 py-2 whitespace-nowrap">
+                                <input
+                                  id={`preview-sym-${idx}`}
+                                  type="text"
+                                  value={item.stockSymbol}
+                                  onChange={(e) => handleUpdateDraftValue(idx, 'stockSymbol', e.target.value)}
+                                  className="px-1.5 py-1 text-center font-bold font-mono bg-zinc-950 border border-zinc-800 rounded-md focus:border-emerald-500 focus:bg-zinc-900 uppercase w-24 text-xs text-zinc-100"
+                                />
+                              </td>
+                              <td className="px-6 py-2 text-right whitespace-nowrap">
+                                <input
+                                  id={`preview-qty-${idx}`}
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity || ''}
+                                  onChange={(e) => handleUpdateDraftValue(idx, 'quantity', e.target.value)}
+                                  className="px-1.5 py-1 text-right font-mono bg-zinc-950 border border-zinc-800 rounded-md focus:border-teal-500 focus:bg-zinc-900 w-24 text-xs text-zinc-100"
+                                />
+                              </td>
+                              <td className="px-6 py-2 text-right whitespace-nowrap">
+                                <div className="inline-flex flex-col items-end">
+                                  <input
+                                    id={`preview-price-${idx}`}
+                                    type="number"
+                                    min="0"
+                                    value={item.averageCostPrice || ''}
+                                    onChange={(e) => handleUpdateDraftValue(idx, 'averageCostPrice', e.target.value)}
+                                    className="px-1.5 py-1 text-right font-mono bg-zinc-950 border border-zinc-800 rounded-md focus:border-teal-500 focus:bg-zinc-900 w-32 text-xs text-zinc-100"
+                                  />
+                                  <span className="text-[10px] text-zinc-500 mt-1 font-mono font-medium">
+                                    ≈ {formatVND(item.averageCostPrice)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-2 text-center whitespace-nowrap">
+                                <button
+                                  id={`delete-draft-${idx}`}
+                                  onClick={() => handleDeleteDraftItem(idx)}
+                                  className="text-zinc-550 hover:text-red-400 p-1.5 rounded-md hover:bg-zinc-850 cursor-pointer transition"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {validationWarnings.length > 0 && (
+                      <div className="m-4 p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1">
+                        <p className="font-bold text-amber-400 flex items-center space-x-1 text-[11px]">
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                          <span>Các cảnh báo từ hệ thống AI:</span>
+                        </p>
+                        {validationWarnings.map((war, wIdx) => (
+                          <p key={wIdx} className="text-[10px] text-amber-500/80 pl-4 list-disc">{war}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Confirmed Import Trigger banner */}
+                    <div className="mt-6 px-6 flex justify-end space-x-3 select-none">
+                      <button
+                        id="cancel-draft-btn"
+                        onClick={() => setPreviewPositions([])}
+                        className="px-4 py-2 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold rounded-xl cursor-pointer transition border border-zinc-700"
+                      >
+                        Xóa bảng Preview
+                      </button>
+
+                      <button
+                        id="commit-import-btn"
+                        onClick={handleProceedImport}
+                        className="px-5 py-2 bg-emerald-500 hover:bg-emerald-450 text-black font-extrabold rounded-xl cursor-pointer transition flex items-center space-x-2"
+                      >
+                        <Check className="h-4 w-4 stroke-[2.5]" />
+                        <span>Xác nhận Nạp Tài sản</span>
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="py-24 text-center text-zinc-650">
+                    <ClipboardCheck className="h-10 w-10 text-zinc-800 mx-auto mb-2" />
+                    <p className="font-semibold text-zinc-400">Bộ đệm preview trống</p>
+                    <p className="text-[10px] text-zinc-550 mt-1 max-w-sm mx-auto">
+                      Hãy lựa chọn phương thức nạp dữ liệu ở bảng điều khiển bên trái (Ảnh chụp nhanh, Copy-Paste, hoặc Nhập trực tiếp) để nạp bảng preview tại đây.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
         </div>

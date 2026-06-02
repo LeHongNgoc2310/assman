@@ -87,9 +87,13 @@ export default function AuthModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       {/* Dynamic blurred high contrast safety backdrop */}
-      <div className="absolute inset-0 bg-black/85 backdrop-blur-md" />
+      <div 
+        className="absolute inset-0 bg-black/85 backdrop-blur-md cursor-pointer" 
+        onClick={onGuestAccess}
+        title="Bấm ra ngoài để trải nghiệm chế độ Khách"
+      />
 
       {/* Auth visual card container board */}
       <div className="relative bg-zinc-950 border border-zinc-900 rounded-3xl w-full max-w-md p-8 overflow-hidden shadow-2xl shadow-emerald-500/5 animate-fade-in">
@@ -104,7 +108,7 @@ export default function AuthModal({
           </div>
           <div>
             <span className="font-sans text-2xl font-extrabold tracking-tight text-white uppercase block">
-              AssMan Port <span className="text-emerald-400 font-bold lowercase italic font-serif">Gate</span>
+              Assetly Port <span className="text-emerald-400 font-bold lowercase italic font-serif">Gate</span>
             </span>
             <span className="text-zinc-500 text-[11px] font-mono block mt-1 tracking-wider uppercase">
               Quản lý tài sản cá nhân thông minh
@@ -255,7 +259,7 @@ export default function AuthModal({
           )}
 
           <p className="text-[10px] text-zinc-600 text-center leading-relaxed select-none px-4 pt-1">
-            * Theo yêu cầu của bạn, khách vãng lai vẫn được quyền xem và sử dụng 100% tất cả các chức năng VIP của AssMan.
+            * Theo yêu cầu của bạn, khách vãng lai vẫn được quyền xem và sử dụng 100% tất cả các chức năng VIP của Assetly.
           </p>
         </div>
 

@@ -79,26 +79,240 @@ let marketIndices: MarketIndex[] = [
   { symbol: "UPCOM", name: "UPCoM-Index", price: 95.80, prevClose: 95.55, change: 0.25, changePercent: 0.26 }
 ];
 
-// Sync Real Stock Market Prices from VNSTOCK (VNDIRECT & TCBS public financial REST API feeds)
+// Sync Real Stock Market Prices from VNSTOCK or SSI FCData API
 let isRefreshingRealtime = false;
 let lastSyncedAt: Date | null = null;
+let lastSyncedSource = "Simulation";
+let lastSyncError: string | null = null;
+let ssiSyncDetails = {
+  isConfigured: false,
+  hasConsumerId: false,
+  hasConsumerSecret: false,
+  lastAuthAttempt: null as string | null,
+  lastPriceAttempt: null as string | null,
+  lastSsiResponseStatus: null as number | null,
+  lastSsiResponseBody: null as string | null
+};
+
+async function fetchWithTimeout(url: string, options: any = {}, timeoutMs: number = 3500) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return response;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatDateValue(date: Date): string {
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
 
 async function syncRealMarketPrices() {
   if (isRefreshingRealtime) return;
   isRefreshingRealtime = true;
-  console.log("🔄 Đồng bộ bảng giá VNSTOCK từ VNDIRECT & TCBS...");
 
+  const ssiId = process.env.SSI_CONSUMER_ID;
+  const ssiSecret = process.env.SSI_CONSUMER_SECRET || process.env.SSI_CONSUMER_SECR;
+
+  ssiSyncDetails.isConfigured = !!(ssiId && ssiSecret);
+  ssiSyncDetails.hasConsumerId = !!ssiId;
+  ssiSyncDetails.hasConsumerSecret = !!ssiSecret;
+
+  if (ssiId && ssiSecret) {
+    console.log("🔐 Phát hiện thiết lập tài khoản SSI FCData API. Đang kết nối...");
+    ssiSyncDetails.lastAuthAttempt = new Date().toISOString();
+    try {
+      const authUrl = "https://fc-data.ssi.com.vn/api/v2/Market/AccessToken";
+      const authResponse = await fetchWithTimeout(authUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          consumerID: ssiId,
+          consumerSecret: ssiSecret
+        })
+      }, 5000);
+
+      ssiSyncDetails.lastSsiResponseStatus = authResponse.status;
+      if (authResponse.ok) {
+        const authData = await authResponse.json() as any;
+        const accessToken = authData.token || (authData.data && authData.data.accessToken) || authData.accessToken;
+
+        if (accessToken) {
+          console.log("🌸 Đăng nhập SSI FCData API thành công! Đang tải dữ liệu chứng khoán...");
+          ssiSyncDetails.lastPriceAttempt = new Date().toISOString();
+          const toDate = new Date();
+          const fromDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000); // 5 days
+          const toDateStr = formatDateValue(toDate);
+          const fromDateStr = formatDateValue(fromDate);
+
+          let ssiSyncedCount = 0;
+          let ssiLastErrorDetails = "";
+
+          for (let i = 0; i < marketAssets.length; i++) {
+            const asset = marketAssets[i];
+            try {
+              const symbol = asset.symbol;
+              const priceUrl = `https://fc-data.ssi.com.vn/api/v2/Market/DailyStockPrice?lookupRequest.symbol=${symbol}&lookupRequest.fromDate=${fromDateStr}&lookupRequest.toDate=${toDateStr}&lookupRequest.pageIndex=1&lookupRequest.pageSize=10`;
+
+              const priceResponse = await fetchWithTimeout(priceUrl, {
+                headers: {
+                  "Authorization": `Bearer ${accessToken}`,
+                  "Accept": "application/json"
+                }
+              }, 4000);
+
+              if (priceResponse.ok) {
+                const priceData = await priceResponse.json() as any;
+                const records = priceData && (
+                  Array.isArray(priceData.data) ? priceData.data :
+                  Array.isArray(priceData.dataList) ? priceData.dataList :
+                  (priceData.data && Array.isArray(priceData.data.dataList)) ? priceData.data.dataList :
+                  (priceData.data && Array.isArray(priceData.data.data)) ? priceData.data.data :
+                  null
+                );
+
+                if (records && records.length > 0) {
+                  // Take the latest record chronologically (usually the last in the list)
+                  const latestRecord = records[records.length - 1];
+
+                  const rawClose = Number(latestRecord.closeprice) || Number(latestRecord.close) || 0;
+                  const rawRef = Number(latestRecord.refprice) || Number(latestRecord.basicPrice) || 0;
+                  const rawChange = Number(latestRecord.pricechange) || Number(latestRecord.change) || 0;
+                  const rawPct = Number(latestRecord.perpricechange) || Number(latestRecord.pctChange) || 0;
+
+                  if (rawClose > 0) {
+                    // SSI can use full VNĐ unit (e.g. 28500) rather than standard unit on board (28.5)
+                    // If it is small (e.g. < 1000) and not a derivative, scale by 1000
+                    const price = rawClose < 1000 && asset.type !== 'DERIVATIVE' ? rawClose * 1000 : rawClose;
+                    const prevClose = rawRef < 1000 && asset.type !== 'DERIVATIVE' ? rawRef * 1000 : rawRef;
+                    const change = rawChange < 500 && asset.type !== 'DERIVATIVE' ? rawChange * 1000 : rawChange;
+
+                    asset.price = price;
+                    asset.prevClose = prevClose > 0 ? prevClose : price - change;
+                    asset.change = change;
+                    asset.changePercent = Math.round(rawPct * 100) / 100;
+                    ssiSyncedCount++;
+                  }
+                } else if (priceData && priceData.message) {
+                  ssiLastErrorDetails = `DailyStockPrice msg: ${priceData.message}`;
+                }
+              } else {
+                const bodyTxt = await priceResponse.text();
+                ssiLastErrorDetails = `DailyStockPrice HTTP ${priceResponse.status}: ${bodyTxt}`;
+              }
+            } catch (symErr: any) {
+              ssiLastErrorDetails = `DailyStockPrice exception: ${symErr.message || symErr}`;
+            }
+
+            // Sleep 1100ms between assets to respect the 1/s rate limit
+            if (i < marketAssets.length - 1) {
+              await sleep(1100);
+            }
+          }
+
+          // Sync indices from SSI DailyIndex API if available
+          try {
+            for (let j = 0; j < marketIndices.length; j++) {
+              // Pause 1100ms before fetching index to avoid rate limits
+              await sleep(1100);
+
+              const idx = marketIndices[j];
+              const indexId = idx.symbol === 'VNINDEX' ? 'VNINDEX' : idx.symbol;
+              const indexUrl = `https://fc-data.ssi.com.vn/api/v2/Market/DailyIndex?lookupRequest.indexId=${indexId}&lookupRequest.fromDate=${fromDateStr}&lookupRequest.toDate=${toDateStr}&lookupRequest.pageIndex=1&lookupRequest.pageSize=10`;
+
+              const idxResponse = await fetchWithTimeout(indexUrl, {
+                headers: {
+                  "Authorization": `Bearer ${accessToken}`,
+                  "Accept": "application/json"
+                }
+              }, 4000);
+
+              if (idxResponse.ok) {
+                const idxData = await idxResponse.json() as any;
+                const idxRecords = idxData && (
+                  Array.isArray(idxData.data) ? idxData.data :
+                  Array.isArray(idxData.dataList) ? idxData.dataList :
+                  (idxData.data && Array.isArray(idxData.data.dataList)) ? idxData.data.dataList :
+                  (idxData.data && Array.isArray(idxData.data.data)) ? idxData.data.data :
+                  null
+                );
+
+                if (idxRecords && idxRecords.length > 0) {
+                  const latestIdxRecord = idxRecords[idxRecords.length - 1];
+
+                  const value = Number(latestIdxRecord.indexValue) || Number(latestIdxRecord.indexvalue) || 0;
+                  const change = Number(latestIdxRecord.change) || 0;
+                  const pctChange = Number(latestIdxRecord.ratioChange) || Number(latestIdxRecord.ratiochange) || 0;
+
+                  if (value > 0) {
+                    idx.price = value;
+                    idx.change = change;
+                    idx.changePercent = Math.round(pctChange * 100) / 100;
+                    idx.prevClose = value - change;
+                  }
+                }
+              }
+            }
+          } catch (idxErr) {
+            // Ignore index sync error
+          }
+
+          if (ssiSyncedCount > 0) {
+            lastSyncedAt = new Date();
+            lastSyncedSource = "SSI FCData";
+            lastSyncError = null;
+            ssiSyncDetails.lastSsiResponseBody = "Dữ liệu chứng khoán đồng bộ thành công!";
+            console.log(`✅ Đồng bộ thành công ${ssiSyncedCount} mã tài sản từ SSI FCData API!`);
+            isRefreshingRealtime = false;
+            return;
+          } else {
+            lastSyncError = `Không có mã nào được đồng bộ từ SSI. Chi tiết: ${ssiLastErrorDetails || "Có thể sai cấu hình/IP đăng ký hoặc phiên giao dịch hết hạn."}`;
+          }
+        } else {
+          lastSyncError = "Không tìm thấy token dạng Bearer trong dữ liệu đăng nhập SSI.";
+        }
+      } else {
+        const bodyTxt = await authResponse.text();
+        ssiSyncDetails.lastSsiResponseBody = bodyTxt;
+        lastSyncError = `SSI Auth failed with status ${authResponse.status}: ${bodyTxt || "No response"}`;
+      }
+    } catch (err: any) {
+      lastSyncError = `SSI Sync exception: ${err?.message || err}`;
+      console.warn(`⚠️ Kết nối SSI FCData thất bại: ${lastSyncError}. Sang chế độ VNDIRECT/TCBS...`);
+    }
+  }
+
+  // Fallback to VNDIRECT & TCBS public source (previously referred to as VNSTOCK in client indicators)
+  console.log("🔄 Đồng bộ bảng giá từ nguồn VNSTOCK (VNDIRECT & TCBS)...");
+
+  let syncSuccessAny = false;
+
+  // 1. Fetch Equities & ETFs from VNDIRECT FinInfo API (Vnstock core feed)
   try {
-    // 1. Fetch Equities & ETFs from VNDIRECT FinInfo API (Vnstock core feed)
     const stockList = ["HPG", "FPT", "VNM", "VCB", "TCB", "SSI", "VND", "MWG", "VIC", "VHM", "MSN", "ACB", "E1VFVN30", "FUEVFVND"];
     const url = `https://finfo-api.vndirect.com.vn/v4/stock_prices?q=code:${stockList.join(",")}&size=100`;
     
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://banggia.vndirect.com.vn/"
       }
-    });
+    }, 4000);
 
     if (response.ok) {
       const result = await response.json() as any;
@@ -130,21 +344,26 @@ async function syncRealMarketPrices() {
           }
         });
         console.log("✅ Cập nhật thành công nhóm cổ phiếu & chứng chỉ quỹ từ VNDIRECT!");
+        syncSuccessAny = true;
       }
     } else {
       console.warn(`⚠️ Phản hồi từ VNDIRECT không thành công: ${response.status}`);
     }
+  } catch (err: any) {
+    console.warn(`⚠️ Bỏ qua đồng bộ bảng giá VNDIRECT: API không phản hồi kịp hoặc lỗi kết nối (${err.message || err})`);
+  }
 
-    // 2. Fetch Derivative VN30F1M from TCBS Bot Public API
+  // 2. Fetch Derivative VN30F1M from TCBS Bot Public API
+  try {
     const nowSecs = Math.floor(Date.now() / 1000);
     const thirtyDaysAgoSecs = nowSecs - (30 * 24 * 60 * 60);
     const tcbsUrl = `https://apipub.tcbs.com.vn/tcbs-bot/stock/historical-data?ticker=VN30F1M&type=derivative&resolution=D&from=${thirtyDaysAgoSecs}&to=${nowSecs}`;
 
-    const tcbsResponse = await fetch(tcbsUrl, {
+    const tcbsResponse = await fetchWithTimeout(tcbsUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       }
-    });
+    }, 4000);
 
     if (tcbsResponse.ok) {
       const tcbsResult = await tcbsResponse.json() as any;
@@ -164,22 +383,27 @@ async function syncRealMarketPrices() {
           asset.change = Math.round(change * 100) / 100;
           asset.changePercent = Math.round(pctChange * 100) / 100;
           console.log(`✅ Cập nhật thành công mã phái sinh VN30F1M từ TCBS: ${closePrice} điểm`);
+          syncSuccessAny = true;
         }
       }
     } else {
       console.warn(`⚠️ Phản hồi từ TCBS không thành công: ${tcbsResponse.status}`);
     }
+  } catch (err: any) {
+    console.warn(`⚠️ Bỏ qua đồng bộ phái sinh TCBS: API không phản hồi kịp hoặc lỗi kết nối (${err.message || err})`);
+  }
 
-    // 3. Fetch Market Indices from VNDIRECT index_informations API
+  // 3. Fetch Market Indices from VNDIRECT index_informations API
+  try {
     const indicesCodeList = ["VNINDEX", "VN30", "HNX", "UPCOM"];
     const indicesUrl = `https://finfo-api.vndirect.com.vn/v4/index_informations?q=indexCode:${indicesCodeList.join(",")}&size=40`;
     
-    const indicesResponse = await fetch(indicesUrl, {
+    const indicesResponse = await fetchWithTimeout(indicesUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://banggia.vndirect.com.vn/"
       }
-    });
+    }, 4000);
 
     if (indicesResponse.ok) {
       const idxResult = await indicesResponse.json() as any;
@@ -208,18 +432,20 @@ async function syncRealMarketPrices() {
           }
         });
         console.log("✅ Cập nhật thành công điểm số các chỉ số (index) từ VNDIRECT!");
+        syncSuccessAny = true;
       }
     } else {
       console.warn(`⚠️ Phản hồi chỉ số VNDIRECT không thành công: ${indicesResponse.status}`);
     }
-
-    lastSyncedAt = new Date();
-
-  } catch (err) {
-    console.error("❌ Lỗi xảy ra khi đồng bộ bảng giá thực tế VNSTOCK:", err);
-  } finally {
-    isRefreshingRealtime = false;
+  } catch (err: any) {
+    console.warn(`⚠️ Bỏ qua đồng bộ chỉ số VNDIRECT: API không phản hồi kịp hoặc lỗi kết nối (${err.message || err})`);
   }
+
+  if (syncSuccessAny) {
+    lastSyncedAt = new Date();
+    lastSyncedSource = "VNSTOCK";
+  }
+  isRefreshingRealtime = false;
 }
 
 // Initial Sync on boot
@@ -279,9 +505,20 @@ app.get("/api/market-data", (req, res) => {
   res.json({
     assets: marketAssets,
     indices: marketIndices,
-    source: "VNSTOCK (VNDIRECT, TCBS live REST APIs)",
+    source: lastSyncedSource === "Simulation" ? "Simulation" : `${lastSyncedSource} (Live API)`,
     lastSyncedAt: lastSyncedAt ? lastSyncedAt.toISOString() : new Date().toISOString(),
-    realtimeActive: true
+    realtimeActive: true,
+    diagnostics: {
+      lastSyncedSource,
+      lastSyncError,
+      isConfigured: ssiSyncDetails.isConfigured,
+      hasConsumerId: ssiSyncDetails.hasConsumerId,
+      hasConsumerSecret: ssiSyncDetails.hasConsumerSecret,
+      lastAuthAttempt: ssiSyncDetails.lastAuthAttempt,
+      lastPriceAttempt: ssiSyncDetails.lastPriceAttempt,
+      lastSsiResponseStatus: ssiSyncDetails.lastSsiResponseStatus,
+      lastSsiResponseBody: ssiSyncDetails.lastSsiResponseBody,
+    }
   });
 });
 
@@ -305,8 +542,22 @@ app.post("/api/ocr", async (req, res) => {
     }
 
     if (!ai) {
+      const geminiKey = process.env.GEMINI_API_KEY;
+      if (geminiKey) {
+        ai = new GoogleGenAI({
+          apiKey: geminiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
+      }
+    }
+
+    if (!ai) {
       return res.status(503).json({ 
-        error: "Gemini API service chưa được cấu hình. Bạn hãy thiết lập GEMINI_API_KEY trong panel Secrets." 
+        error: "Gemini API service chưa được cấu hình. Bạn hãy mục Settings > Secrets nạp GEMINI_API_KEY để kích hoạt tính năng trích xuất danh mục tự động từ ảnh chụp màn hình." 
       });
     }
 
@@ -334,37 +585,107 @@ Nguyên tắc cực kỳ quan trọng về giá vốn:
 - Trả về kết quả chính xác theo cấu trúc schema JSON array.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: { parts: [imagePart, { text: promptText }] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          description: "Danh sách các vị thế đầu tư chứng khoán được trích xuất từ ảnh",
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              stockSymbol: { 
-                type: Type.STRING, 
-                description: "Mã chứng khoán, ví dụ: HPG, FPT, VNM, E1VFVN30, VN30F1M" 
-              },
-              quantity: { 
-                type: Type.NUMBER, 
-                description: "Số lượng chứng khoán sở hữu, ví dụ: 200" 
-              },
-              averageCostPrice: { 
-                type: Type.NUMBER, 
-                description: "Giá mua trung bình thực tế bằng VNĐ đầy đủ (ví dụ: 25700)" 
+    let response: any = null;
+    let lastError: any = null;
+    const maxAttempts = 3;
+
+    // Retry loop on primary model (gemini-3.5-flash) to handle transient errors like 503 Spike in demand
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const modelName = "gemini-3.5-flash";
+        console.log(`🤖 [Attempt ${attempt}/${maxAttempts}] Gọi Gemini OCR qua model: ${modelName}`);
+        
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: { parts: [imagePart, { text: promptText }] },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              description: "Danh sách các vị thế đầu tư chứng khoán được trích xuất từ ảnh",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  stockSymbol: { 
+                    type: Type.STRING, 
+                    description: "Mã chứng khoán, ví dụ: HPG, FPT, VNM, E1VFVN30, VN30F1M" 
+                  },
+                  quantity: { 
+                    type: Type.NUMBER, 
+                    description: "Số lượng chứng khoán sở hữu, ví dụ: 200" 
+                  },
+                  averageCostPrice: { 
+                    type: Type.NUMBER, 
+                    description: "Giá mua trung bình thực tế bằng VNĐ đầy đủ (ví dụ: 25700)" 
+                  }
+                },
+                required: ["stockSymbol", "quantity", "averageCostPrice"]
               }
-            },
-            required: ["stockSymbol", "quantity", "averageCostPrice"]
+            }
           }
+        });
+
+        if (response && response.text) {
+          console.log(`✅ Thành công ở lượt thứ ${attempt} bằng model: ${modelName}`);
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || err?.toString() || "";
+        console.warn(`⚠️ Lượt thứ ${attempt} thất bại với lỗi: ${errMsg}`);
+        
+        if (attempt < maxAttempts) {
+          const delayMs = attempt * 1500; // 1500ms, then 3000ms
+          console.log(`🔄 Đang chờ ${delayMs}ms trước khi thử lại...`);
+          await sleep(delayMs);
         }
       }
-    });
+    }
 
-    const responseText = response.text;
+    // Ultimate fallback to "gemini-3.1-flash-lite" if all primary attempts failed
+    if (!response || !response.text) {
+      const fallbackModel = "gemini-3.1-flash-lite";
+      console.log(`🚨 Kích hoạt model dự phòng cấp độ cao nhất: ${fallbackModel}`);
+      try {
+        response = await ai.models.generateContent({
+          model: fallbackModel,
+          contents: { parts: [imagePart, { text: promptText }] },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              description: "Danh sách các vị thế đầu tư chứng khoán được trích xuất từ ảnh",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  stockSymbol: { 
+                    type: Type.STRING, 
+                    description: "Mã chứng khoán, ví dụ: HPG, FPT, VNM, E1VFVN30, VN30F1M" 
+                  },
+                  quantity: { 
+                    type: Type.NUMBER, 
+                    description: "Số lượng chứng khoán sở hữu, ví dụ: 200" 
+                  },
+                  averageCostPrice: { 
+                    type: Type.NUMBER, 
+                    description: "Giá mua trung bình thực tế bằng VNĐ đầy đủ (ví dụ: 25700)" 
+                  }
+                },
+                required: ["stockSymbol", "quantity", "averageCostPrice"]
+              }
+            }
+          }
+        });
+        if (response && response.text) {
+          console.log(`✅ Thành công sử dụng model dự phòng: ${fallbackModel}`);
+        }
+      } catch (fallbackErr: any) {
+        console.error("🚨 Cả model chính và model dự phòng đều gặp lỗi:", fallbackErr);
+        throw lastError || fallbackErr;
+      }
+    }
+
+    const responseText = response ? response.text : null;
     if (!responseText) {
       return res.status(500).json({ error: "Gemini không trả về kết quả dịch." });
     }
@@ -411,7 +732,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 AssMan server running on http://localhost:${PORT}`);
+    console.log(`🚀 Assetly server running on http://localhost:${PORT}`);
   });
 }
 

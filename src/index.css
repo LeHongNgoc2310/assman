@@ -6,10 +6,28 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* Toàn bộ app sử dụng đồng bộ Plus Jakarta Sans làm font chính mặc định */
+*, *::before, *::after, input, select, textarea, button, option, optgroup {
+  font-family: var(--font-sans) !important;
+}
+
+/* Đảm bảo các nơi khai báo font-mono và con cái của chúng nhận đúng font monospace */
+.font-mono, .font-mono *, pre, code, .font-mono input, .font-mono select, .font-mono button {
+  font-family: var(--font-mono) !important;
+}
+
 body {
   background-color: #09090b;
   color: #f4f4f5;
-  font-family: var(--font-sans);
+}
+
+/* Custom scrollbar-none to hide horizontal or vertical scrollbars seamlessly */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
 
 /* Custom fade-in and slide keyframes for premium motion simulation */

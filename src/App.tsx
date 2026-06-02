@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrokerageAccount, PortfolioPosition, AlertRule, AlertNotification, MarketAsset, ImportHistoryItem, MarketIndex } from './types';
 import { initialDemoAccounts, initialDemoPositions, consolidatePositions } from './utils';
 import Header from './components/Header';
@@ -19,12 +19,51 @@ import {
   TrendingUp, 
   Clock, 
   Wallet,
-  BookOpen
+  BookOpen,
+  CheckCircle2,
+  Sparkles,
+  X,
+  ExternalLink,
+  Undo
 } from 'lucide-react';
 
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'import' | 'pnl' | 'risk'>('dashboard');
+  const [showLeftArrow, setShowLeftArrow] = useState(false);
+  const [showRightArrow, setShowRightArrow] = useState(true);
+  const navTrackRef = React.useRef<HTMLDivElement>(null);
+
+  // Trigger scrolling state and position monitoring
+  useEffect(() => {
+    const track = navTrackRef.current;
+    if (!track) return;
+
+    const handleScroll = () => {
+      setShowLeftArrow(track.scrollLeft > 10);
+      setShowRightArrow(track.scrollLeft < track.scrollWidth - track.clientWidth - 12);
+    };
+
+    handleScroll();
+    track.addEventListener('scroll', handleScroll);
+    window.addEventListener('resize', handleScroll);
+
+    const timer = setTimeout(handleScroll, 300);
+
+    return () => {
+      track.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+      clearTimeout(timer);
+    };
+  }, [activeTab]);
+
+  // Auto-scroll selected tab into view on mobile scrollable rail
+  useEffect(() => {
+    const el = document.getElementById(`nav-tab-${activeTab}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [activeTab]);
 
   // Auth States
   const [currentUser, setCurrentUser] = useState<string | null>(null);
@@ -84,6 +123,71 @@ export default function App() {
   const [marketIndices, setMarketIndices] = useState<MarketIndex[]>([]);
   const [isRealtimeActive, setIsRealtimeActive] = useState<boolean>(false);
   const [marketDataSource, setMarketDataSource] = useState<string>("Simulation");
+  const [marketDiagnostics, setMarketDiagnostics] = useState<any>(null);
+
+  // State trackers for uploaded positions, automatic broker filters, and success message toast
+  const [successToast, setSuccessToast] = useState<{
+    message: string;
+    brokerName: string;
+    accountId: string;
+    count: number;
+  } | null>(null);
+
+  const [importUndoData, setImportUndoData] = useState<{
+    positions: PortfolioPosition[];
+    accounts: BrokerageAccount[];
+    historyItems: ImportHistoryItem[];
+  } | null>(null);
+
+  const [recentlyAddedSymbols, setRecentlyAddedSymbols] = useState<string[]>([]);
+  const [recentlyImportedBroker, setRecentlyImportedBroker] = useState<string>('ALL');
+  const [hasUnseenImport, setHasUnseenImport] = useState<boolean>(false);
+  const [undoToastVisible, setUndoToastVisible] = useState<boolean>(false);
+
+  // Auto-hide the Undo confirmation message after a few seconds
+  useEffect(() => {
+    if (undoToastVisible) {
+      const timer = setTimeout(() => {
+        setUndoToastVisible(false);
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [undoToastVisible]);
+
+  const hasViewedSymbolsRef = useRef<boolean>(false);
+
+  // Clear specific "NEW" stock symbol badges when active tab changes after being viewed
+  useEffect(() => {
+    if (recentlyAddedSymbols.length > 0) {
+      const isViewingTab = activeTab === 'dashboard' || activeTab === 'pnl';
+      if (isViewingTab) {
+        if (hasViewedSymbolsRef.current) {
+          // If we had already flagged it as viewed in a viewing tab, and we transition/switch tab, clear it
+          setRecentlyAddedSymbols([]);
+          hasViewedSymbolsRef.current = false;
+        } else {
+          // First time entering a viewing tab, flag it as viewed
+          hasViewedSymbolsRef.current = true;
+        }
+      } else {
+        // If we are on some other tab, and we have already viewed them, clear them
+        if (hasViewedSymbolsRef.current) {
+          setRecentlyAddedSymbols([]);
+          hasViewedSymbolsRef.current = false;
+        }
+      }
+    }
+  }, [activeTab, recentlyAddedSymbols]);
+
+  // When new symbols are imported, reset the viewed flag
+  useEffect(() => {
+    if (recentlyAddedSymbols.length > 0) {
+      const isViewingTab = activeTab === 'dashboard' || activeTab === 'pnl';
+      hasViewedSymbolsRef.current = isViewingTab;
+    } else {
+      hasViewedSymbolsRef.current = false;
+    }
+  }, [recentlyAddedSymbols, activeTab]);
 
   // Telemetry details
   const [lastRefreshTime, setLastRefreshTime] = useState<Date>(new Date());
@@ -180,6 +284,7 @@ export default function App() {
       }
       setIsRealtimeActive(!!rawData.realtimeActive);
       setMarketDataSource(rawData.source || "Simulation");
+      setMarketDiagnostics(rawData.diagnostics);
       setPriceServiceError(false);
       setLastRefreshTime(new Date());
 
@@ -328,10 +433,33 @@ export default function App() {
     newPositions: Omit<PortfolioPosition, 'id' | 'currentPrice' | 'updatedAt'>[], 
     mode: 'add' | 'overwrite'
   ) => {
+    // Save snapshot of positions, accounts, history for undo functionality
+    setImportUndoData({
+      positions: [...positions],
+      accounts: [...accounts],
+      historyItems: [...historyItems],
+    });
+
     // Refresh date timestamp on account
     const updatedAccounts = accounts.map(a => a.id === accountId ? { ...a, lastImportedAt: new Date().toISOString() } : a);
     setAccounts(updatedAccounts);
     localStorage.setItem('assman_accounts', JSON.stringify(updatedAccounts));
+
+    // Track state of recently added items for the notification toast & 'NEW' badges & automatic broker filters
+    const account = accounts.find(a => a.id === accountId);
+    if (account) {
+      setRecentlyImportedBroker(account.broker);
+      const importedSymbols = newPositions.map(p => p.stockSymbol.toUpperCase());
+      setRecentlyAddedSymbols(importedSymbols);
+      setHasUnseenImport(true);
+      
+      setSuccessToast({
+        message: `Đã nạp thành công ${importedSymbols.length} vị thế đầu tư vào tài khoản của bạn tại ${account.broker}!`,
+        brokerName: account.broker,
+        accountId: accountId,
+        count: importedSymbols.length
+      });
+    }
 
     let updatedPos: PortfolioPosition[] = [];
     
@@ -413,6 +541,29 @@ export default function App() {
     });
     setPositions(updated);
     localStorage.setItem('assman_positions', JSON.stringify(updated));
+  };
+
+  // Clear specific "NEW" stock symbol badge when viewed/clicked by user
+  const handleSeenSymbol = (symbol: string) => {
+    setRecentlyAddedSymbols(prev => prev.filter(s => s !== symbol.toUpperCase()));
+  };
+
+  // Revert last import to prevent errors/wrong brokerage selection
+  const handleUndoImport = () => {
+    if (importUndoData) {
+      setPositions(importUndoData.positions);
+      setAccounts(importUndoData.accounts);
+      setHistoryItems(importUndoData.historyItems);
+
+      localStorage.setItem('assman_positions', JSON.stringify(importUndoData.positions));
+      localStorage.setItem('assman_accounts', JSON.stringify(importUndoData.accounts));
+      localStorage.setItem('assman_history', JSON.stringify(importUndoData.historyItems));
+
+      setImportUndoData(null);
+      setRecentlyAddedSymbols([]);
+      setSuccessToast(null);
+      setUndoToastVisible(true);
+    }
   };
 
   // 3. RISK ALERT CONCENTRATION RULES
@@ -512,98 +663,120 @@ export default function App() {
         />
       )}
 
-      {/* 1. Brand header of the application */}
-      <Header
-        totalNAV={aggregatedNAV}
-        dailyPL={calculatedDailyPL}
-        dailyPLPercent={calculatedDailyPLPercent}
-        isSimulating={isSimulatingPrice}
-        onManualRefresh={fetchMarketQuotes}
-        lastRefreshTime={lastRefreshTime}
-        notifications={notifications}
-        onMarkAllRead={handleMarkAllRead}
-        currentUser={currentUser === 'Khách' ? null : currentUser}
-        isGuestUser={isGuest || !currentUser}
-        onLogout={handleLogout}
-        onTriggerLogin={() => setShowAuthModal(true)}
-        isRealtimeActive={isRealtimeActive}
-        marketDataSource={marketDataSource}
-        indices={marketIndices}
-      />
+      {/* Sticky Top-level Freeze Shell */}
+      <div className={`${showGate ? 'relative' : 'sticky top-0 z-50'} flex flex-col w-full bg-[#09090b] shadow-sm`}>
+        {/* 1. Brand header of the application */}
+        <Header
+          totalNAV={aggregatedNAV}
+          dailyPL={calculatedDailyPL}
+          dailyPLPercent={calculatedDailyPLPercent}
+          isSimulating={isSimulatingPrice}
+          onManualRefresh={fetchMarketQuotes}
+          lastRefreshTime={lastRefreshTime}
+          notifications={notifications}
+          onMarkAllRead={handleMarkAllRead}
+          currentUser={currentUser === 'Khách' ? null : currentUser}
+          isGuestUser={isGuest || !currentUser}
+          onLogout={handleLogout}
+          onTriggerLogin={() => setShowAuthModal(true)}
+          isRealtimeActive={isRealtimeActive}
+          marketDataSource={marketDataSource}
+          marketDiagnostics={marketDiagnostics}
+          indices={marketIndices}
+        />
 
-      {/* 2. Primary Navigation rail */}
-      <nav id="app-nav-bar" className="bg-zinc-900/60 border-b border-zinc-800/50 backdrop-blur-xs shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8 h-12 overflow-x-auto whitespace-nowrap scrollbar-none items-center text-xs font-sans">
+        {/* 2. Primary Navigation rail */}
+        <nav id="app-nav-bar" className="bg-[#09090b]/95 border-b border-zinc-805/50 backdrop-blur-md relative select-none">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative overflow-hidden">
             
-            <button
-              id="nav-tab-dashboard"
-              onClick={() => setActiveTab('dashboard')}
-              className={`py-3 px-1 inline-flex items-center space-x-2 border-b-2 font-bold cursor-pointer transition-all ${
-                activeTab === 'dashboard'
-                  ? 'border-emerald-500 text-emerald-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-              }`}
-            >
-              <PieChart className="h-4 w-4" />
-              <span>Tổng Quan (Dashboard)</span>
-            </button>
+            {/* Left fade-out block with animated arrow pointing left (shows when scrolled right, meaning left menu items are hidden) */}
+            {showLeftArrow && (
+              <div className="absolute left-0 top-0 bottom-0 w-12 bg-gradient-to-r from-[#09090b] via-[#09090b]/80 to-transparent pointer-events-none z-10 flex items-center justify-start pl-3 md:hidden animate-fade-in">
+                <span className="text-emerald-400 font-black animate-pulse text-sm select-none">&larr;</span>
+              </div>
+            )}
 
-            <button
-              id="nav-tab-pnl"
-              onClick={() => setActiveTab('pnl')}
-              className={`py-3 px-1 inline-flex items-center space-x-2 border-b-2 font-bold cursor-pointer transition-all ${
-                activeTab === 'pnl'
-                  ? 'border-emerald-500 text-emerald-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-              }`}
-            >
-              <BarChart2 className="h-4 w-4" />
-              <span>Tài Sản & P&L Chi Tiết</span>
-            </button>
+            {/* Right fade-out block with animated arrow pointing right (shows when scrolled left, meaning right menu items are hidden) */}
+            {showRightArrow && (
+              <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-[#09090b] via-[#09090b]/80 to-transparent pointer-events-none z-10 flex items-center justify-end pr-3 md:hidden animate-fade-in">
+                <span className="text-emerald-400 font-black animate-pulse text-sm select-none">&rarr;</span>
+              </div>
+            )}
 
-            <button
-              id="nav-tab-import"
-              onClick={() => setActiveTab('import')}
-              className={`py-3 px-1 inline-flex items-center space-x-2 border-b-2 font-bold cursor-pointer transition-all ${
-                activeTab === 'import'
-                  ? 'border-emerald-500 text-emerald-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-              }`}
+            {/* Scrollable track containing tabs */}
+            <div 
+              ref={navTrackRef}
+              className="flex space-x-7 h-12 overflow-x-auto whitespace-nowrap scrollbar-none items-center text-xs font-sans px-2 md:px-0 scroll-smooth"
             >
-              <Download className="h-4 w-4" />
-              <span>Nạp Dữ Liệu (Import)</span>
-            </button>
+              
+              <button
+                id="nav-tab-dashboard"
+                onClick={() => setActiveTab('dashboard')}
+                className={`py-3 px-1 inline-flex items-center space-x-1.5 border-b-2 font-bold cursor-pointer transition-all ${
+                  activeTab === 'dashboard'
+                    ? 'border-emerald-500 text-emerald-400'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+              >
+                <PieChart className="h-4 w-4" />
+                <span>Tổng Quan</span>
+              </button>
 
-            <button
-              id="nav-tab-risk"
-              onClick={() => setActiveTab('risk')}
-              className={`py-3 px-1 inline-flex items-center space-x-2 border-b-2 font-bold cursor-pointer transition-all ${
-                activeTab === 'risk'
-                  ? 'border-emerald-500 text-emerald-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-              }`}
-            >
-              <ShieldAlert className="h-4 w-4" />
-              <span>Cảnh Báo Tỷ Trọng</span>
-            </button>
+              <button
+                id="nav-tab-pnl"
+                onClick={() => {
+                  setActiveTab('pnl');
+                  if (hasUnseenImport) {
+                    setHasUnseenImport(false);
+                  }
+                  // Auto-dismiss the success toast if active when opening this tab
+                  setSuccessToast(null);
+                }}
+                className={`py-3 px-1 inline-flex items-center space-x-1.5 border-b-2 font-bold cursor-pointer transition-all ${
+                  activeTab === 'pnl'
+                    ? 'border-emerald-500 text-emerald-400'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+              >
+                <BarChart2 className="h-4 w-4" />
+                <span>Tài Sản & P&L Chi Tiết</span>
+                {hasUnseenImport && (
+                  <span className="bg-emerald-500 text-black text-[9px] font-extrabold px-1.5 py-0.5 rounded-full select-none animate-pulse shrink-0 tracking-wider font-mono">
+                    NEW
+                  </span>
+                )}
+              </button>
 
-            <button
-              id="nav-tab-accounts"
-              onClick={() => setActiveTab('accounts')}
-              className={`py-3 px-1 inline-flex items-center space-x-2 border-b-2 font-bold cursor-pointer transition-all ${
-                activeTab === 'accounts'
-                  ? 'border-emerald-500 text-emerald-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-              }`}
-            >
-              <Landmark className="h-4 w-4" />
-              <span>Quản Lý CTCK ({accounts.length})</span>
-            </button>
+              <button
+                id="nav-tab-risk"
+                onClick={() => setActiveTab('risk')}
+                className={`py-3 px-1 inline-flex items-center space-x-1.5 border-b-2 font-bold cursor-pointer transition-all ${
+                  activeTab === 'risk'
+                    ? 'border-emerald-500 text-emerald-400'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+              >
+                <ShieldAlert className="h-4 w-4" />
+                <span>Cảnh Báo Tỷ Trọng</span>
+              </button>
 
+              <button
+                id="nav-tab-accounts"
+                onClick={() => setActiveTab('accounts')}
+                className={`py-3 px-1 inline-flex items-center space-x-1.5 border-b-2 font-bold cursor-pointer transition-all ${
+                  activeTab === 'accounts'
+                    ? 'border-emerald-500 text-emerald-400'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+              >
+                <Landmark className="h-4 w-4" />
+                <span>Quản Lý CTCK ({accounts.length})</span>
+              </button>
+
+            </div>
           </div>
-        </div>
-      </nav>
+        </nav>
+      </div>
 
       {/* 3. Main Workspace Container */}
       <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
@@ -627,6 +800,8 @@ export default function App() {
               marketAssets={marketAssets}
               onNavigateToTab={(tab) => setActiveTab(tab as any)}
               staleCount={staleCount}
+              newSymbols={recentlyAddedSymbols}
+              onSeenSymbol={handleSeenSymbol}
             />
           )}
 
@@ -635,14 +810,10 @@ export default function App() {
               positions={positions}
               accounts={accounts}
               onUpdateCostPrice={handleUpdateCostPrice}
-            />
-          )}
-
-          {activeTab === 'import' && (
-            <ImportDataTab
-              accounts={accounts}
-              onImportPositions={handleImportPositions}
-              onAddHistoryItem={handleAddHistoryItem}
+              selectedBrokerFilter={recentlyImportedBroker}
+              onBrokerFilterChange={setRecentlyImportedBroker}
+              newSymbols={recentlyAddedSymbols}
+              onSeenSymbol={handleSeenSymbol}
             />
           )}
 
@@ -663,6 +834,8 @@ export default function App() {
               onAddAccount={handleAddAccount}
               onEditAccount={handleEditAccount}
               onDeleteAccount={handleDeleteAccount}
+              onImportPositions={handleImportPositions}
+              onAddHistoryItem={handleAddHistoryItem}
             />
           )}
         </div>
@@ -672,13 +845,96 @@ export default function App() {
       {/* 4. Elegant Minimal Foot notes */}
       <footer className="bg-zinc-950 border-t border-zinc-900 py-6 text-center text-[10px] font-mono text-zinc-500 mt-12">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>Assman Personal Asset Manager • MVP Release v1.0.4</p>
+          <p>Assetly Personal Asset Manager • MVP Release v1.0.4</p>
           <p className="flex items-center space-x-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Assman Core Engine v1.0.0 (Read-Only)</span>
+            <span>Assetly Core Engine v1.0.0 (Read-Only)</span>
           </p>
         </div>
       </footer>
+
+      {/* Dynamic completion shortcut toast layer */}
+      {successToast && (
+        <div id="import-success-toast" className="fixed bottom-6 right-6 left-6 md:left-auto md:w-[455px] bg-zinc-950 border-2 border-emerald-500/80 rounded-2xl p-5 shadow-2xl shadow-emerald-500/10 z-[110] animate-fade-in divide-y divide-zinc-850">
+          <div className="flex items-start justify-between pb-3">
+            <div className="flex items-center space-x-3">
+              <div className="bg-emerald-500/15 border border-emerald-400/20 p-2 rounded-xl text-emerald-400 shrink-0">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-extrabold text-zinc-100 flex items-center space-x-1">
+                  <span>Nạp tài sản thành công!</span>
+                  <Sparkles className="h-3.5 w-3.5 text-yellow-400 animate-pulse" />
+                </h4>
+                <p className="text-[11px] text-zinc-400 mt-1">{successToast.message}</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                setSuccessToast(null);
+                setImportUndoData(null);
+              }}
+              className="text-zinc-550 hover:text-zinc-350 p-1 bg-zinc-905 border border-zinc-800 rounded-lg transition shrink-0"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-transparent">
+            <span className="text-[10px] text-zinc-550 italic block font-sans">
+              Định vị CTCK: <strong className="text-emerald-400 font-mono font-bold">{successToast.brokerName}</strong>
+            </span>
+            <div className="flex items-center justify-end space-x-2">
+              {importUndoData && (
+                <button
+                  onClick={handleUndoImport}
+                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-amber-500 hover:text-amber-400 font-extrabold text-[11px] rounded-lg transition flex items-center space-x-1 active:scale-95 cursor-pointer shadow-xs shrink-0"
+                  title="Nhập nhầm CTCK hoặc sai tài khoản? Nhấn để loại bỏ đợt nạp này"
+                >
+                  <Undo className="h-3 w-3 shrink-0" />
+                  <span>Hoàn tác (Undo)</span>
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setRecentlyImportedBroker(successToast.brokerName);
+                  setActiveTab('pnl');
+                  setHasUnseenImport(false);
+                  setSuccessToast(null);
+                }}
+                className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-450 text-black font-extrabold text-[11px] rounded-lg transition flex items-center space-x-1.5 shadow-sm active:scale-95 cursor-pointer shrink-0"
+              >
+                <span>Xem danh mục</span>
+                <ExternalLink className="h-3 w-3 inline-block" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Confirmation Message Toast Layer */}
+      {undoToastVisible && (
+        <div id="undo-success-toast" className="fixed bottom-6 right-6 left-6 md:left-auto md:w-[420px] bg-zinc-950 border-2 border-amber-500/80 rounded-2xl p-5 shadow-2xl shadow-amber-500/10 z-[110] animate-fade-in flex items-start justify-between">
+          <div className="flex items-start space-x-3">
+            <div className="bg-amber-500/15 border border-amber-400/20 p-2 rounded-xl text-amber-500 shrink-0">
+              <Undo className="h-5 w-5" />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-extrabold text-zinc-100">
+                Đã hoàn tác thành công!
+              </h4>
+              <p className="text-[11px] text-zinc-400 mt-1 font-sans leading-relaxed">
+                Bạn đã hoàn tác thao tác nạp và đồng bộ danh mục trước đó.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => setUndoToastVisible(false)}
+            className="text-zinc-550 hover:text-zinc-350 p-1 bg-zinc-905 border border-zinc-800 rounded-lg transition shrink-0 ml-3"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
     </div>
   );

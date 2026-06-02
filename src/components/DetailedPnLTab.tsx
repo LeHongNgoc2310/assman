@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PortfolioPosition, BrokerageAccount } from '../types';
 import { consolidatePositions, formatVND, formatShares, formatPercent, ConsolidateItem } from '../utils';
 import { 
@@ -19,16 +19,23 @@ interface DetailedPnLTabProps {
   positions: PortfolioPosition[];
   accounts: BrokerageAccount[];
   onUpdateCostPrice: (accountId: string, symbol: string, currentPrice: number) => void;
+  selectedBrokerFilter?: string;
+  onBrokerFilterChange?: (broker: string) => void;
+  newSymbols?: string[];
+  onSeenSymbol?: (symbol: string) => void;
 }
 
 export default function DetailedPnLTab({
   positions,
   accounts,
   onUpdateCostPrice,
+  selectedBrokerFilter = 'ALL',
+  onBrokerFilterChange,
+  newSymbols = [],
+  onSeenSymbol,
 }: DetailedPnLTabProps) {
   const [filterSymbol, setFilterSymbol] = useState('');
   const [selectedAssetFilter, setSelectedAssetFilter] = useState<'ALL' | 'EQUITY' | 'ETF' | 'DERIVATIVE'>('ALL');
-  const [selectedBrokerFilter, setSelectedBrokerFilter] = useState<string>('ALL');
 
   // Track expanded row symbols for multi-broker breakdown view
   const [expandedRowSymbols, setExpandedRowSymbols] = useState<Record<string, boolean>>({});
@@ -39,6 +46,14 @@ export default function DetailedPnLTab({
   const [newCostValue, setNewCostValue] = useState<number>(0);
 
   const consolidated = consolidatePositions(positions, accounts);
+
+  // Calculate total metrics for weight calculations
+  const totalStockMkt = consolidated.reduce((acc, curr) => acc + curr.totalMarketValue, 0);
+  const totalCash = accounts.reduce((acc, curr) => acc + curr.cashBalance, 0);
+  const totalNAV = totalStockMkt + totalCash;
+
+  // Dynamically extract only connected brokers from configured brokerage accounts
+  const connectedBrokers = Array.from(new Set(accounts.map(acc => acc.broker))).filter(Boolean).sort();
 
   // Toggle expanding multi-broker details
   const toggleExpanded = (symbol: string) => {
@@ -91,27 +106,27 @@ export default function DetailedPnLTab({
             id="filter-asset-select"
             value={selectedAssetFilter}
             onChange={(e) => setSelectedAssetFilter(e.target.value as any)}
-            className="px-3 py-1.5 border border-zinc-850 rounded-xl bg-zinc-955 text-zinc-300 focus:outline-hidden text-xs font-semibold cursor-pointer"
+            className="px-3 py-1.5 border border-zinc-800 rounded-xl bg-zinc-950 text-zinc-200 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 text-xs font-semibold cursor-pointer"
           >
-            <option value="ALL">Tất cả lớp tài sản</option>
-            <option value="EQUITY">Cổ phiếu niêm yết</option>
-            <option value="ETF">Quỹ chỉ số (ETF)</option>
-            <option value="DERIVATIVE">Chứng khoán Phái sinh</option>
+            <option value="ALL" className="bg-zinc-950 text-zinc-100">Tất cả lớp tài sản</option>
+            <option value="EQUITY" className="bg-zinc-950 text-zinc-100">Cổ phiếu niêm yết</option>
+            <option value="ETF" className="bg-zinc-950 text-zinc-100">Quỹ chỉ số (ETF)</option>
+            <option value="DERIVATIVE" className="bg-zinc-950 text-zinc-100">Chứng khoán Phái sinh</option>
           </select>
 
           {/* Broker filter */}
           <select
             id="filter-broker-select"
             value={selectedBrokerFilter}
-            onChange={(e) => setSelectedBrokerFilter(e.target.value)}
-            className="px-3 py-1.5 border border-zinc-850 rounded-xl bg-zinc-955 text-zinc-300 focus:outline-hidden text-xs font-semibold cursor-pointer"
+            onChange={(e) => onBrokerFilterChange?.(e.target.value)}
+            className="px-3 py-1.5 border border-zinc-800 rounded-xl bg-zinc-950 text-zinc-200 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 text-xs font-semibold cursor-pointer"
           >
-            <option value="ALL">Tất cả CTCK</option>
-            <option value="SSI">SSI Securities</option>
-            <option value="VPS">VPS Securities</option>
-            <option value="TCBS">TCBS Securities</option>
-            <option value="MBS">MBS Securities</option>
-            <option value="Pinetree">Pinetree Securities</option>
+            <option value="ALL" className="bg-zinc-950 text-zinc-100">Tất cả CTCK</option>
+            {connectedBrokers.map(broker => (
+              <option key={broker} value={broker} className="bg-zinc-950 text-zinc-100">
+                {broker} Securities
+              </option>
+            ))}
           </select>
         </div>
 
@@ -129,7 +144,9 @@ export default function DetailedPnLTab({
                 <th className="px-6 py-3 text-right">Giá thị trường (VND)</th>
                 <th className="px-6 py-3 text-right">Giá trị gốc sở hữu</th>
                 <th className="px-6 py-3 text-right">Giá trị thị trường</th>
-                <th className="px-6 py-3 text-right">Lãi / Lỗ trạng thái</th>
+                <th className="px-6 py-3 text-right">Lãi / Lỗ (VND)</th>
+                <th className="px-6 py-3 text-right">% P&L</th>
+                <th className="px-6 py-3 text-right">Tỷ trọng (% NAV)</th>
                 <th className="px-6 py-3 text-center">Tài khoản giữ</th>
               </tr>
             </thead>
@@ -150,13 +167,23 @@ export default function DetailedPnLTab({
                     {/* Primary Consolidated Row */}
                     <tr 
                       className={`hover:bg-zinc-850/45 transition cursor-pointer ${isExpanded ? 'bg-zinc-900/50' : ''}`}
-                      onClick={() => toggleExpanded(item.stockSymbol)}
+                      onClick={() => {
+                        toggleExpanded(item.stockSymbol);
+                        if (newSymbols.includes(item.stockSymbol.toUpperCase())) {
+                          onSeenSymbol?.(item.stockSymbol);
+                        }
+                      }}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
                           <span className={`px-2.5 py-1 rounded-md text-xs font-mono font-bold border ${badgeColor}`}>
                             {item.stockSymbol}
                           </span>
+                          {newSymbols.includes(item.stockSymbol.toUpperCase()) && (
+                            <span className="bg-emerald-500 text-black text-[8px] font-extrabold px-1.5 py-0.5 rounded-full select-none animate-pulse shrink-0 tracking-wider">
+                              NEW
+                            </span>
+                          )}
                           {hasMultipleAccounts && (
                             <span className="bg-teal-500/10 text-teal-400 text-[9px] font-bold px-1.5 py-0.5 rounded-sm border border-teal-500/15">
                               Đa rổ
@@ -186,14 +213,21 @@ export default function DetailedPnLTab({
                         {formatVND(item.totalMarketValue)}
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
-                        <span className={`inline-flex items-center font-mono font-extrabold text-[13px] ${
+                        <span className={`inline-flex items-center font-mono font-bold text-xs ${
                           item.totalUnrealizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'
                         }`}>
                           {item.totalUnrealizedPL >= 0 ? '+' : ''}{formatVND(item.totalUnrealizedPL, true)}
-                          <span className="text-[10px] font-medium ml-1.5">
-                            ({formatPercent(item.totalUnrealizedPLPct)})
-                          </span>
                         </span>
+                      </td>
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <span className={`font-mono font-extrabold text-sm ${
+                          item.totalUnrealizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'
+                        }`}>
+                          {item.totalUnrealizedPL >= 0 ? '+' : ''}{formatPercent(item.totalUnrealizedPLPct)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right whitespace-nowrap font-mono font-bold text-zinc-200">
+                        {totalNAV > 0 ? formatPercent((item.totalMarketValue / totalNAV) * 100) : '0.00%'}
                       </td>
                       <td className="px-6 py-4 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center space-x-1.5">
@@ -214,7 +248,7 @@ export default function DetailedPnLTab({
                     {/* Sub-table discrete breakdown level if expanded or has multiple brokers */}
                     {isExpanded && (
                       <tr className="bg-zinc-950/20">
-                        <td colSpan={8} className="px-8 py-3 bg-zinc-950/40 border-t border-b border-zinc-800/65">
+                        <td colSpan={10} className="px-8 py-3 bg-zinc-950/40 border-t border-b border-zinc-800/65">
                           <div className="space-y-3 pt-1">
                             <p className="font-bold text-zinc-200 text-[11px] flex items-center space-x-1">
                               <Activity className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -304,6 +338,17 @@ export default function DetailedPnLTab({
                                         }`}>
                                           {breakdownAcc.unrealizedPL >= 0 ? '+' : ''}{formatVND(breakdownAcc.unrealizedPL)} ({formatPercent(breakdownAcc.unrealizedPLPct)})
                                         </p>
+                                        <p className="text-[9px] text-zinc-500 font-mono mt-0.5">
+                                          Tỷ trọng / NAV: <strong className="text-zinc-350">
+                                            {(() => {
+                                              let itemMktVal = breakdownAcc.quantity * item.currentPrice;
+                                              if (item.assetType === 'DERIVATIVE') {
+                                                itemMktVal = breakdownAcc.quantity * item.currentPrice * 100000;
+                                              }
+                                              return totalNAV > 0 ? formatPercent((itemMktVal / totalNAV) * 100) : '0.00%';
+                                            })()}
+                                          </strong>
+                                        </p>
                                       </div>
                                     </div>
                                   </div>
@@ -320,7 +365,7 @@ export default function DetailedPnLTab({
 
               {filteredItems.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-zinc-550">
+                  <td colSpan={10} className="px-6 py-12 text-center text-zinc-550">
                     <Search className="h-8 w-8 mx-auto text-zinc-700 mb-2" />
                     <p className="font-semibold text-xs text-zinc-300">Không tìm thấy mã tài sản khớp bộ lọc</p>
                     <p className="text-[10px] text-zinc-500 mt-1 font-sans">Vui lòng thử điều chỉnh lại từ khóa hoặc danh sách Công ty chứng khoán.</p>

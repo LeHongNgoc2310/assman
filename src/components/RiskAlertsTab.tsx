@@ -40,6 +40,86 @@ export default function RiskAlertsTab({
   const totalStockMkt = consolidated.reduce((acc, curr) => acc + curr.totalMarketValue, 0);
   const totalNAV = totalStockMkt + totalCash;
 
+  const [expandedSuggestions, setExpandedSuggestions] = useState<Record<string, {
+    totalNav: number;
+    positionValue: number;
+    currentPrice: number;
+    sharesToSell: number;
+    valueAfterSell: number;
+    weightAfterSell: number;
+    excessValue: number;
+    error?: string;
+  } | null>>({});
+
+  const handleToggleSuggestion = (ruleId: string, ruleSymbol: string, thresholdPercent: number) => {
+    if (expandedSuggestions[ruleId]) {
+      setExpandedSuggestions(prev => ({ ...prev, [ruleId]: null }));
+    } else {
+      const matchingHoldings = consolidated.find(c => c.stockSymbol === ruleSymbol);
+      if (!matchingHoldings) {
+        setExpandedSuggestions(prev => ({
+          ...prev,
+          [ruleId]: {
+            totalNav: totalNAV,
+            positionValue: 0,
+            currentPrice: 0,
+            sharesToSell: 0,
+            valueAfterSell: 0,
+            weightAfterSell: 0,
+            excessValue: 0,
+            error: "Không tìm thấy thông tin tài sản trong danh mục."
+          }
+        }));
+        return;
+      }
+
+      const currentPrice = matchingHoldings.currentPrice;
+      const positionValue = matchingHoldings.totalMarketValue;
+      const targetMaxValue = totalNAV * (thresholdPercent / 100);
+      const excessValue = positionValue - targetMaxValue;
+
+      if (currentPrice <= 0) {
+        setExpandedSuggestions(prev => ({
+          ...prev,
+          [ruleId]: {
+            totalNav: totalNAV,
+            positionValue,
+            currentPrice: 0,
+            sharesToSell: 0,
+            valueAfterSell: positionValue,
+            weightAfterSell: totalNAV > 0 ? (positionValue / totalNAV) * 100 : 0,
+            excessValue,
+            error: "Giá thị trường bằng 0 hoặc không hợp lệ."
+          }
+        }));
+        return;
+      }
+
+      const isDerivative = ruleSymbol === 'VN30F1M' || 
+                           ruleSymbol.endsWith('F') || 
+                           matchingHoldings.assetType === 'DERIVATIVE';
+      const loSize = isDerivative ? 1 : 100;
+      const multiplier = isDerivative ? 100000 : 1;
+      const sharesToSellRaw = excessValue / (currentPrice * multiplier);
+      const sharesToSell = Math.max(0, Math.floor(sharesToSellRaw / loSize) * loSize);
+      const valueAfterSell = positionValue - (sharesToSell * currentPrice * multiplier);
+      const weightAfterSell = totalNAV > 0 ? (valueAfterSell / totalNAV) * 100 : 0;
+
+      setExpandedSuggestions(prev => ({
+        ...prev,
+        [ruleId]: {
+          totalNav: totalNAV,
+          positionValue,
+          currentPrice,
+          sharesToSell,
+          valueAfterSell,
+          weightAfterSell,
+          excessValue
+        }
+      }));
+    }
+  };
+
   const handleCreateRule = (e: React.FormEvent) => {
     e.preventDefault();
     setInputError(null);
@@ -82,7 +162,7 @@ export default function RiskAlertsTab({
             <span>Chỉ mục Kiểm soát Rủi ro Tập trung (Concentration Risk Alert)</span>
           </p>
           <p className="text-zinc-400 leading-relaxed text-[11px]">
-            Đa số các quỹ chuyên nghiệp và chuyên gia tài sản khuyến nghị <strong>không nên phân bổ vượt quá 15% - 20% tổng NAV</strong> vào bất kỳ mã cổ phiếu đơn lẻ nào để tránh rủi ro sụt giảm mạnh. AssMan giúp bạn cấu hình các chỉ báo tự động giám sát. Khi giá cổ phiếu dịch chuyển khiến tỷ trọng vượt biên mức cài đặt, hệ thống sẽ trigger cảnh báo cho bạn ngay lập tức.
+            Đa số các quỹ chuyên nghiệp và chuyên gia tài sản khuyến nghị <strong>không nên phân bổ vượt quá 15% - 20% tổng NAV</strong> vào bất kỳ mã cổ phiếu đơn lẻ nào để tránh rủi ro sụt giảm mạnh. Assetly giúp bạn cấu hình các chỉ báo tự động giám sát. Khi giá cổ phiếu dịch chuyển khiến tỷ trọng vượt biên mức cài đặt, hệ thống sẽ trigger cảnh báo cho bạn ngay lập tức.
           </p>
         </div>
 
@@ -159,6 +239,9 @@ export default function RiskAlertsTab({
               const matchingHoldings = consolidated.find(c => c.stockSymbol === rule.stockSymbol);
               const currentWeight = matchingHoldings && totalNAV > 0 ? (matchingHoldings.totalMarketValue / totalNAV) * 100 : 0;
               const isBreached = currentWeight > rule.thresholdPercent;
+              const isDerivative = rule.stockSymbol === 'VN30F1M' || 
+                                   rule.stockSymbol.endsWith('F') || 
+                                   (matchingHoldings && matchingHoldings.assetType === 'DERIVATIVE');
 
               return (
                 <div
@@ -199,7 +282,7 @@ export default function RiskAlertsTab({
                     </div>
 
                     {/* Weight benchmarks metrics comparison list */}
-                    <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-800/65 pt-3">
+                    <div className="mt-4 grid grid-cols-3 gap-2 border-t border-zinc-800/65 pt-3">
                       <div>
                         <span className="text-[10px] text-zinc-500 uppercase tracking-wider block select-none">Ngưỡng tối đa</span>
                         <span className="text-sm font-bold text-zinc-300 font-mono">
@@ -212,15 +295,74 @@ export default function RiskAlertsTab({
                           {currentWeight.toFixed(2)}%
                         </span>
                       </div>
+                      <div>
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider block select-none">Số lượng đang có</span>
+                        <span className="text-sm font-bold text-zinc-250 font-mono block truncate" title={matchingHoldings ? `${matchingHoldings.totalQuantity.toLocaleString('vi-VN')} ${isDerivative ? 'HĐ' : 'cp'}` : `0 ${isDerivative ? 'HĐ' : 'cp'}`}>
+                          {matchingHoldings ? `${matchingHoldings.totalQuantity.toLocaleString('vi-VN')} ${isDerivative ? 'HĐ' : 'cp'}` : `0 ${isDerivative ? 'HĐ' : 'cp'}`}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Status Alert logs rendering */}
                     {rule.isActive && (
-                      <div className="mt-4">
+                      <div className="mt-4 space-y-2">
                         {isBreached ? (
-                          <div className="flex items-center space-x-2 text-red-400 bg-red-500/10 border border-red-500/15 p-2 rounded-xl text-[10px] font-semibold">
-                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-500" />
-                            <span>Vượt ngưỡng an toàn! ({formatPercent(currentWeight - rule.thresholdPercent)} overweight)</span>
+                          <div className="space-y-2.5">
+                            <div className="flex items-center space-x-2 text-red-400 bg-red-500/10 border border-red-500/15 p-2.5 rounded-xl text-[10px] font-semibold">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                              <span>Vượt ngưỡng an toàn! (+{(currentWeight - rule.thresholdPercent).toFixed(2)}% overweight)</span>
+                            </div>
+
+                            {/* Actionable Suggestion Section for spot equities & derivatives */}
+                            {matchingHoldings && matchingHoldings.currentPrice > 0 && (
+                              <div className="mt-2 text-left">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSuggestion(rule.id, rule.stockSymbol, rule.thresholdPercent)}
+                                  className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center space-x-1 cursor-pointer transition select-none bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg"
+                                >
+                                  <span>
+                                    {expandedSuggestions[rule.id] ? '[Ẩn gợi ý giảm tỷ trọng ▲]' : '[Xem gợi ý giảm tỷ trọng ▼]'}
+                                  </span>
+                                </button>
+
+                                {expandedSuggestions[rule.id] && (
+                                  <div className="mt-2 bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3.5 text-zinc-300 space-y-2.5 leading-relaxed text-[11px] animate-fade-in text-left">
+                                    <div className="border-b border-zinc-850 pb-2">
+                                      <p className="text-zinc-200">
+                                        Để về ngưỡng <strong className="text-zinc-100 font-bold">{rule.thresholdPercent.toFixed(0)}%</strong>, bạn cần giảm:
+                                      </p>
+                                    </div>
+
+                                    {expandedSuggestions[rule.id]!.sharesToSell === 0 ? (
+                                      <p className="text-amber-400 font-semibold text-[10.5px]">
+                                        Chênh lệch &lt; 1 {isDerivative ? 'HĐ' : 'lô'}, không thể giảm chính xác. Lượng cần giảm &lt; 1 {isDerivative ? 'HĐ' : 'lô (100cp)'}. Tỷ trọng gần ngưỡng nhưng chưa thể giảm đúng bội số lô.
+                                      </p>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        <div className="bg-zinc-900/60 p-3 rounded-lg border border-zinc-800 space-y-1">
+                                          <p className="text-emerald-400 font-black text-[13px]">
+                                            {expandedSuggestions[rule.id]!.sharesToSell.toLocaleString('vi-VN')} {isDerivative ? 'hợp đồng (HĐ)' : 'cổ phiếu (cp)'} {rule.stockSymbol}
+                                          </p>
+                                          <p className="text-zinc-500 font-mono text-[10px]">
+                                            (~{formatVND(expandedSuggestions[rule.id]!.sharesToSell * expandedSuggestions[rule.id]!.currentPrice * (isDerivative ? 100000 : 1))} theo giá hiện tại)
+                                          </p>
+                                        </div>
+
+                                        <p className="text-[10.5px] text-zinc-400 font-mono">
+                                          Tỷ trọng sau khi giảm: <span className="text-emerald-400 font-extrabold">≈ {expandedSuggestions[rule.id]!.weightAfterSell.toFixed(1)}%</span>
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    <div className="text-[9.5px] text-zinc-500 border-t border-zinc-850 pt-2.5 leading-normal flex items-start space-x-1">
+                                      <span className="text-amber-500 shrink-0 select-none">⚠️</span>
+                                      <span>Đây là gợi ý tham khảo dựa trên giá snapshot. Không phải khuyến nghị đầu tư. Lệnh thực tế đặt tại ứng dụng CTCK của bạn.</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <div className="flex items-center space-x-2 text-emerald-450 bg-emerald-500/10 border border-emerald-500/15 p-2 rounded-xl text-[10px] font-semibold">
