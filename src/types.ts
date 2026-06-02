@@ -1,4 +1,24 @@
 export type BrokerType = string;
+export type SubAccountType = 'THUONG' | 'MARGIN' | 'PHAI_SINH' | 'TRAI_PHIEU';
+
+export interface ManualTransaction {
+  id: string;
+  accountId: string; // FK -> BrokerageAccount
+  type: 'BUY' | 'SELL';
+  symbol: string;
+  quantity: number;
+  price: number;
+  feeRate: number;      // % fee rate, e.g. 0.15 for 0.15%
+  feeAmount: number;    // calculated fee in VND
+  taxRate: number;      // % tax rate, e.g. 0.1 for 0.1%
+  taxAmount: number;    // calculated tax in VND
+  netAmount: number;    // Net flow: negative for BUY, positive for SELL
+  realizedPnL: number;  // 0 for BUY, actual realized gain/loss for SELL
+  tradeDate: string;    // yyyy-mm-dd
+  note: string;
+  confirmedAt: string;  // Server/ISO timestamp
+  createdAt: string;    // Client/ISO timestamp
+}
 
 export interface BrokerageAccount {
   id: string;
@@ -7,6 +27,13 @@ export interface BrokerageAccount {
   cashBalance: number;
   lastImportedAt?: string;
   color: string;
+  
+  // SubAccount extensions:
+  subAccountType?: SubAccountType; // THUONG / MARGIN / PHAI_SINH / TRAI_PHIEU
+  feeRate?: number;                // e.g. 0.15 for 0.15%
+  taxRate?: number;                // e.g. 0.1 for 0.1%, locked
+  isInitialLoaded?: boolean;       // OCR/Excel/Manual list imported exactly once
+  transactions?: ManualTransaction[];
 }
 
 export type AssetType = 'EQUITY' | 'ETF' | 'DERIVATIVE';

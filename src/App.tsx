@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BrokerageAccount, PortfolioPosition, AlertRule, AlertNotification, MarketAsset, ImportHistoryItem, MarketIndex } from './types';
+import { BrokerageAccount, PortfolioPosition, AlertRule, AlertNotification, MarketAsset, ImportHistoryItem, MarketIndex, ManualTransaction } from './types';
 import { initialDemoAccounts, initialDemoPositions, consolidatePositions } from './utils';
 import Header from './components/Header';
 import DashboardTab from './components/DashboardTab';
@@ -7,6 +7,7 @@ import AccountsTab from './components/AccountsTab';
 import ImportDataTab from './components/ImportDataTab';
 import DetailedPnLTab from './components/DetailedPnLTab';
 import RiskAlertsTab from './components/RiskAlertsTab';
+import PerformanceTab from './components/PerformanceTab';
 import AuthModal from './components/AuthModal';
 import { 
   PieChart, 
@@ -29,7 +30,7 @@ import {
 
 export default function App() {
   // Navigation
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'import' | 'pnl' | 'risk'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'import' | 'pnl' | 'risk' | 'performance'>('dashboard');
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
   const navTrackRef = React.useRef<HTMLDivElement>(null);
@@ -261,10 +262,10 @@ export default function App() {
   }, []);
 
   // Fetch VN Stock market data feed from our Express backend
-  const fetchMarketQuotes = async () => {
+  const fetchMarketQuotes = async (force: boolean = false) => {
     setIsSimulatingPrice(true);
     try {
-      const response = await fetch('/api/market-data');
+      const response = await fetch(force ? '/api/market-data?force=true' : '/api/market-data');
       if (!response.ok) {
         throw new Error("Mất kết nối với máy chủ VN Stock.");
       }
@@ -543,6 +544,122 @@ export default function App() {
     localStorage.setItem('assman_positions', JSON.stringify(updated));
   };
 
+  // Record manual Buy/Sell transactions with dynamic WAC calculation and Cash adjustment
+  const handleRecordManualTransaction = (
+    accountId: string, 
+    tx: Omit<ManualTransaction, 'id' | 'accountId' | 'confirmedAt' | 'createdAt'>
+  ) => {
+    const isSell = tx.type === 'SELL';
+    
+    // Create new immutable transaction entry
+    const freshTx: ManualTransaction = {
+      ...tx,
+      id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      accountId,
+      confirmedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+
+    // 1. Adjust cash balance and append transaction logs in BrokerageAccount
+    const updatedAccounts = accounts.map(acc => {
+      if (acc.id === accountId) {
+        const prevTxs = acc.transactions || [];
+        const newCash = acc.cashBalance + freshTx.netAmount;
+        return {
+          ...acc,
+          cashBalance: newCash,
+          transactions: [...prevTxs, freshTx],
+          isInitialLoaded: true, // Any transaction recorded marks the sub-account as initialized
+          lastImportedAt: new Date().toISOString()
+        };
+      }
+      return acc;
+    });
+
+    setAccounts(updatedAccounts);
+    localStorage.setItem('assman_accounts', JSON.stringify(updatedAccounts));
+
+    // 2. Adjust or clear holding position (PortfolioPosition)
+    const targetAccount = accounts.find(a => a.id === accountId);
+    if (!targetAccount) return;
+
+    const subAccType = targetAccount.subAccountType || 'THUONG';
+    const assetType = subAccType === 'PHAI_SINH' ? 'DERIVATIVE' : subAccType === 'TRAI_PHIEU' ? 'ETF' : 'EQUITY'; 
+    const multiplier = assetType === 'DERIVATIVE' ? 100000 : 1;
+
+    // Search existing holding for this symbol in this account
+    const existingIndex = positions.findIndex(
+      p => p.accountId === accountId && p.stockSymbol.toUpperCase() === freshTx.symbol.toUpperCase()
+    );
+
+    let updatedPos = [...positions];
+
+    if (!isSell) {
+      // BUY: Add to existing holding or create brand-new position
+      if (existingIndex !== -1) {
+        const existing = updatedPos[existingIndex];
+        const oldQty = existing.quantity;
+        const oldAvg = existing.averageCostPrice;
+        const addQty = freshTx.quantity;
+        const addPrice = freshTx.price;
+
+        // Formula BR-002: new_total_cost = old_total_cost + (buy_quantity × price) + fee_amount
+        const oldTotalCostVal = oldQty * oldAvg * multiplier;
+        const buyCostVal = (addQty * addPrice * multiplier) + freshTx.feeAmount;
+        
+        const totalQty = oldQty + addQty;
+        const totalCostVal = oldTotalCostVal + buyCostVal;
+        
+        const newAvg = totalQty > 0 ? (totalCostVal / multiplier) / totalQty : 0;
+
+        updatedPos[existingIndex] = {
+          ...existing,
+          quantity: totalQty,
+          averageCostPrice: newAvg,
+          updatedAt: new Date().toISOString()
+        };
+      } else {
+        // Create new position line
+        const marketPriceObj = marketAssets.find(ma => ma.symbol === freshTx.symbol.toUpperCase());
+        const latestPrice = marketPriceObj ? marketPriceObj.price : freshTx.price;
+
+        const totalCostVal = (freshTx.quantity * freshTx.price * multiplier) + freshTx.feeAmount;
+        const avg = freshTx.quantity > 0 ? (totalCostVal / multiplier) / freshTx.quantity : 0;
+
+        updatedPos.push({
+          id: `pos-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          accountId,
+          stockSymbol: freshTx.symbol.toUpperCase(),
+          quantity: freshTx.quantity,
+          averageCostPrice: avg,
+          currentPrice: latestPrice,
+          assetType,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    } else {
+      // SELL: Deduct from holding
+      if (existingIndex !== -1) {
+        const existing = updatedPos[existingIndex];
+        const newQty = existing.quantity - freshTx.quantity;
+
+        if (newQty <= 0) {
+          // Rule BR-002: holding is wiped if qty drops to 0
+          updatedPos.splice(existingIndex, 1);
+        } else {
+          updatedPos[existingIndex] = {
+            ...existing,
+            quantity: newQty,
+            updatedAt: new Date().toISOString()
+          };
+        }
+      }
+    }
+
+    setPositions(updatedPos);
+    localStorage.setItem('assman_positions', JSON.stringify(updatedPos));
+  };
+
   // Clear specific "NEW" stock symbol badge when viewed/clicked by user
   const handleSeenSymbol = (symbol: string) => {
     setRecentlyAddedSymbols(prev => prev.filter(s => s !== symbol.toUpperCase()));
@@ -671,7 +788,7 @@ export default function App() {
           dailyPL={calculatedDailyPL}
           dailyPLPercent={calculatedDailyPLPercent}
           isSimulating={isSimulatingPrice}
-          onManualRefresh={fetchMarketQuotes}
+          onManualRefresh={() => fetchMarketQuotes(true)}
           lastRefreshTime={lastRefreshTime}
           notifications={notifications}
           onMarkAllRead={handleMarkAllRead}
@@ -748,6 +865,19 @@ export default function App() {
               </button>
 
               <button
+                id="nav-tab-performance"
+                onClick={() => setActiveTab('performance')}
+                className={`py-3 px-1 inline-flex items-center space-x-1.5 border-b-2 font-bold cursor-pointer transition-all ${
+                  activeTab === 'performance'
+                    ? 'border-emerald-500 text-emerald-400'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                }`}
+              >
+                <TrendingUp className="h-4 w-4" />
+                <span>Hiệu Suất Đầu Tư (TWR)</span>
+              </button>
+
+              <button
                 id="nav-tab-risk"
                 onClick={() => setActiveTab('risk')}
                 className={`py-3 px-1 inline-flex items-center space-x-1.5 border-b-2 font-bold cursor-pointer transition-all ${
@@ -817,6 +947,15 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'performance' && (
+            <PerformanceTab
+              positions={positions}
+              accounts={accounts}
+              marketAssets={marketAssets}
+              onNavigateToTab={(tab) => setActiveTab(tab as any)}
+            />
+          )}
+
           {activeTab === 'risk' && (
             <RiskAlertsTab
               positions={positions}
@@ -831,11 +970,13 @@ export default function App() {
           {activeTab === 'accounts' && (
             <AccountsTab
               accounts={accounts}
+              positions={positions}
               onAddAccount={handleAddAccount}
               onEditAccount={handleEditAccount}
               onDeleteAccount={handleDeleteAccount}
               onImportPositions={handleImportPositions}
               onAddHistoryItem={handleAddHistoryItem}
+              onRecordManualTransaction={handleRecordManualTransaction}
             />
           )}
         </div>

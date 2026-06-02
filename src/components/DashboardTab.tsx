@@ -60,6 +60,18 @@ export default function DashboardTab({
   const totalUnrealizedPL = totalNAV - (totalCost + totalCash); // Total unrealized profit is asset gain
   const totalUnrealizedPLPct = totalCost > 0 ? (totalUnrealizedPL / totalCost) * 100 : 0;
 
+  // Calculate total realized P&L from transactions of all sub-accounts
+  let totalRealizedPL = 0;
+  accounts.forEach(acc => {
+    if (acc.transactions) {
+      acc.transactions.forEach(tx => {
+        if (tx.type === 'SELL') {
+          totalRealizedPL += tx.realizedPnL;
+        }
+      });
+    }
+  });
+
   // Calculate Daily P&L (Change from previous close)
   let dailyPL = 0;
   consolidated.forEach(pos => {
@@ -166,7 +178,7 @@ export default function DashboardTab({
       )}
 
       {/* 2. Key Aggregate Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         
         {/* Total NAV Card */}
         <div className="bg-zinc-900/50 border border-zinc-800/80 p-6 rounded-2xl shadow-xs relative overflow-hidden group">
@@ -178,7 +190,7 @@ export default function DashboardTab({
           
           <div className="flex items-center space-x-4 mt-6 text-xs border-t border-zinc-800/60 pt-3">
             <div>
-              <span className="text-zinc-500">Giá trị vị thế:</span>
+              <span className="text-zinc-500">Vị thế:</span>
               <span className="ml-1 font-semibold text-zinc-350">{formatVND(totalStockMarketValue)}</span>
             </div>
             <div className="border-l border-zinc-800/40 pl-4">
@@ -205,7 +217,7 @@ export default function DashboardTab({
           </p>
 
           <div className="flex items-center space-x-2 mt-6 text-xs border-t border-zinc-800/60 pt-3">
-            <span className="text-zinc-500">Hiệu năng phiên hôm nay:</span>
+            <span className="text-zinc-500">Phiên hôm nay:</span>
             <span className={`font-mono font-bold ${dailyPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               {formatPercent(dailyPLPercent)}
             </span>
@@ -221,7 +233,7 @@ export default function DashboardTab({
           }`}>
             <TrendingUp className="h-5 w-5" />
           </div>
-          <p className="text-xs font-mono font-medium text-zinc-500 uppercase tracking-wider">Tổng Lãi/Lỗ trạng thái (Unrealized P&L)</p>
+          <p className="text-xs font-mono font-medium text-zinc-500 uppercase tracking-wider">Lãi/Lỗ chưa thực hiện</p>
           <p className={`text-xl md:text-2xl font-extrabold mt-2 font-sans tracking-tight select-all whitespace-nowrap truncate ${
             totalUnrealizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'
           }`}>
@@ -229,10 +241,31 @@ export default function DashboardTab({
           </p>
 
           <div className="flex items-center space-x-2 mt-6 text-xs border-t border-zinc-800/60 pt-3">
-            <span className="text-zinc-500">Tỷ suất lợi nhuận kỳ vọng:</span>
+            <span className="text-zinc-500">Kỳ vọng:</span>
             <span className={`font-mono font-bold ${totalUnrealizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               {formatPercent(totalUnrealizedPLPct)}
             </span>
+          </div>
+        </div>
+
+        {/* Total Realized P&L Card */}
+        <div className="bg-zinc-900/50 border border-zinc-800/80 p-6 rounded-2xl shadow-xs relative overflow-hidden group">
+          <div className={`absolute right-4 top-4 p-2.5 rounded-xl border ${
+            totalRealizedPL >= 0
+            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+            : 'bg-red-500/10 text-red-400 border-red-500/20'
+          }`}>
+            <TrendingUp className="h-5 w-5 text-sky-400 border-sky-500/20" />
+          </div>
+          <p className="text-xs font-mono font-medium text-zinc-500 uppercase tracking-wider">Tổng P&L đã thực hiện</p>
+          <p className={`text-xl md:text-2xl font-extrabold mt-2 font-sans tracking-tight select-all whitespace-nowrap truncate ${
+            totalRealizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'
+          }`}>
+            {totalRealizedPL >= 0 ? '+' : ''}{formatVND(totalRealizedPL)}
+          </p>
+
+          <div className="flex items-center space-x-2 mt-6 text-xs border-t border-zinc-800/60 pt-3">
+            <span className="text-zinc-400">Lãi/Lỗ thực tính sau thuế & phí</span>
           </div>
         </div>
 

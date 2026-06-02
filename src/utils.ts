@@ -132,9 +132,9 @@ export function consolidatePositions(
 
 // Prefilled demonstration state so the user can immediately play with a working app
 export const initialDemoAccounts: BrokerageAccount[] = [
-  { id: "acc-1", name: "Tích sản SSI", broker: "SSI", cashBalance: 45000000, lastImportedAt: "2026-05-28T07:12:00Z", color: "#E02424" },
-  { id: "acc-2", name: "Lướt sóng TCBS", broker: "TCBS", cashBalance: 12000000, lastImportedAt: "2026-05-27T10:30:00Z", color: "#3B82F6" },
-  { id: "acc-3", name: "Khối Ngoại Pinetree", broker: "Pinetree", cashBalance: 8200000, lastImportedAt: "2026-05-28T06:00:00Z", color: "#10B981" }
+  { id: "acc-1", name: "Tích sản SSI", broker: "SSI", cashBalance: 45000000, lastImportedAt: "2026-05-28T07:12:00Z", color: "#E02424", subAccountType: "THUONG", feeRate: 0.15, taxRate: 0.1, isInitialLoaded: true, transactions: [] },
+  { id: "acc-2", name: "Lướt sóng TCBS", broker: "TCBS", cashBalance: 12000000, lastImportedAt: "2026-05-27T10:30:00Z", color: "#3B82F6", subAccountType: "MARGIN", feeRate: 0.15, taxRate: 0.1, isInitialLoaded: true, transactions: [] },
+  { id: "acc-3", name: "Khối Ngoại Pinetree", broker: "Pinetree", cashBalance: 8200000, lastImportedAt: "2026-05-28T06:00:00Z", color: "#10B981", subAccountType: "THUONG", feeRate: 0.10, taxRate: 0.1, isInitialLoaded: true, transactions: [] }
 ];
 
 export const initialDemoPositions = (accounts: BrokerageAccount[]): PortfolioPosition[] => [

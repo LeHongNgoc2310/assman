@@ -28,6 +28,7 @@ interface HeaderProps {
     lastPriceAttempt?: string | null;
     lastSsiResponseStatus?: number | null;
     lastSsiResponseBody?: string | null;
+    serverPublicIP?: string | null;
   };
   indices?: MarketIndex[];
 }
@@ -199,15 +200,6 @@ export default function Header({
                           <span className={`font-mono font-bold ${marketDiagnostics.lastSsiResponseStatus === 200 ? "text-emerald-400" : "text-red-400"}`}>
                             {marketDiagnostics.lastSsiResponseStatus}
                           </span>
-                        </div>
-                      )}
-
-                      {(marketDiagnostics?.lastSyncError || marketDiagnostics?.lastSsiResponseBody) && (
-                        <div className="border-t border-zinc-800/80 pt-2 mt-2">
-                          <span className="text-zinc-500 block mb-1">Nhật ký lỗi của máy chủ:</span>
-                          <div className="bg-[#09090b] border border-zinc-800 rounded p-2 text-[10px] text-zinc-400 font-mono break-words leading-relaxed max-h-32 overflow-y-auto">
-                            {marketDiagnostics.lastSyncError || marketDiagnostics.lastSsiResponseBody}
-                          </div>
                         </div>
                       )}
 

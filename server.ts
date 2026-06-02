@@ -79,6 +79,70 @@ let marketIndices: MarketIndex[] = [
   { symbol: "UPCOM", name: "UPCoM-Index", price: 95.80, prevClose: 95.55, change: 0.25, changePercent: 0.26 }
 ];
 
+let serverPublicIP = "Đang xác định...";
+
+function isValidIPv4(ip: string): boolean {
+  const ipv4Regex = /^([0-9]{1,3}\.){3}[0-9]{1,3}$/;
+  return ipv4Regex.test(ip.trim());
+}
+
+async function detectPublicIP() {
+  // Try strictly IPv4-only services first
+  const ipv4Services = [
+    { url: "https://api.ipify.org?format=json", jsonKey: "ip" },
+    { url: "https://ipv4.seeip.org?format=json", jsonKey: "ip" },
+    { url: "https://v4.ident.me/.json", jsonKey: "address" }
+  ];
+
+  for (const service of ipv4Services) {
+    try {
+      const res = await fetch(service.url);
+      if (res.ok) {
+        if (service.jsonKey) {
+          const data = await res.json() as any;
+          const ip = data && data[service.jsonKey];
+          if (ip && isValidIPv4(ip)) {
+            serverPublicIP = ip.trim();
+            console.log(`🌐 Public IP (IPv4) của máy chủ hiện tại: ${serverPublicIP}`);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      // try next service
+    }
+  }
+
+  // Fallback direct text endpoints but filter for IPv4 compatibility
+  const plainTextServices = [
+    "https://ipv4.icanhazip.com",
+    "https://v4.ident.me",
+    "https://ifconfig.me/ip"
+  ];
+
+  for (const url of plainTextServices) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const text = await res.text();
+        const ip = text.trim();
+        if (ip && isValidIPv4(ip)) {
+          serverPublicIP = ip;
+          console.log(`🌐 Public IP (IPv4) của máy chủ hiện tại (fallback textual): ${serverPublicIP}`);
+          return;
+        }
+      }
+    } catch (e) {
+      // try next
+    }
+  }
+
+  serverPublicIP = "Không xác định được IPv4 (Vui lòng liên hệ quản trị viên)";
+}
+
+// Automatically detect IP on boot
+detectPublicIP();
+
 // Sync Real Stock Market Prices from VNSTOCK or SSI FCData API
 let isRefreshingRealtime = false;
 let lastSyncedAt: Date | null = null;
@@ -91,7 +155,8 @@ let ssiSyncDetails = {
   lastAuthAttempt: null as string | null,
   lastPriceAttempt: null as string | null,
   lastSsiResponseStatus: null as number | null,
-  lastSsiResponseBody: null as string | null
+  lastSsiResponseBody: null as string | null,
+  serverPublicIP: "Đang xác định..."
 };
 
 async function fetchWithTimeout(url: string, options: any = {}, timeoutMs: number = 3500) {
@@ -129,6 +194,7 @@ async function syncRealMarketPrices() {
   ssiSyncDetails.isConfigured = !!(ssiId && ssiSecret);
   ssiSyncDetails.hasConsumerId = !!ssiId;
   ssiSyncDetails.hasConsumerSecret = !!ssiSecret;
+  ssiSyncDetails.serverPublicIP = serverPublicIP;
 
   if (ssiId && ssiSecret) {
     console.log("🔐 Phát hiện thiết lập tài khoản SSI FCData API. Đang kết nối...");
@@ -159,6 +225,9 @@ async function syncRealMarketPrices() {
           const fromDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000); // 5 days
           const toDateStr = formatDateValue(toDate);
           const fromDateStr = formatDateValue(fromDate);
+
+          // Rate-limiting safeguard: sleep 1500ms immediately after authorization before hitting endpoints
+          await sleep(1500);
 
           let ssiSyncedCount = 0;
           let ssiLastErrorDetails = "";
@@ -219,18 +288,13 @@ async function syncRealMarketPrices() {
               ssiLastErrorDetails = `DailyStockPrice exception: ${symErr.message || symErr}`;
             }
 
-            // Sleep 1100ms between assets to respect the 1/s rate limit
-            if (i < marketAssets.length - 1) {
-              await sleep(1100);
-            }
+            // Sleep 1500ms between assets to respect the 1/s rate limit strictly
+            await sleep(1500);
           }
 
           // Sync indices from SSI DailyIndex API if available
           try {
             for (let j = 0; j < marketIndices.length; j++) {
-              // Pause 1100ms before fetching index to avoid rate limits
-              await sleep(1100);
-
               const idx = marketIndices[j];
               const indexId = idx.symbol === 'VNINDEX' ? 'VNINDEX' : idx.symbol;
               const indexUrl = `https://fc-data.ssi.com.vn/api/v2/Market/DailyIndex?lookupRequest.indexId=${indexId}&lookupRequest.fromDate=${fromDateStr}&lookupRequest.toDate=${toDateStr}&lookupRequest.pageIndex=1&lookupRequest.pageSize=10`;
@@ -267,6 +331,9 @@ async function syncRealMarketPrices() {
                   }
                 }
               }
+
+              // Sleep 1500ms between index fetches to respect the 1/s rate limit strictly
+              await sleep(1500);
             }
           } catch (idxErr) {
             // Ignore index sync error
@@ -281,18 +348,18 @@ async function syncRealMarketPrices() {
             isRefreshingRealtime = false;
             return;
           } else {
-            lastSyncError = `Không có mã nào được đồng bộ từ SSI. Chi tiết: ${ssiLastErrorDetails || "Có thể sai cấu hình/IP đăng ký hoặc phiên giao dịch hết hạn."}`;
+            lastSyncError = `Nhận dữ liệu rỗng từ SSI (Thành công 0 mã). Chi tiết: ${ssiLastErrorDetails || "Có thể chưa có phân quyền xem mã/ngoài giờ giao dịch/sai IP đăng ký."}\n💡 GIẢI PHÁP TRIỆT ĐỂ: Bạn phải vào trang quản lý API SSI FCData và cấu hình đăng ký địa chỉ IP máy chủ hiện tại vào danh sách White-list IP của Client ID này.`;
           }
         } else {
-          lastSyncError = "Không tìm thấy token dạng Bearer trong dữ liệu đăng nhập SSI.";
+          lastSyncError = `Không tìm thấy token dạng Bearer trong dữ liệu đăng nhập SSI.\n💡 GIẢI PHÁP TRIỆT ĐỂ: Vui lòng kiểm tra lại tài khoản SSI và đảm bảo đã cấp đăng ký IP máy chủ hiện tại trong bảng điều khiển SSI.`;
         }
       } else {
         const bodyTxt = await authResponse.text();
         ssiSyncDetails.lastSsiResponseBody = bodyTxt;
-        lastSyncError = `SSI Auth failed with status ${authResponse.status}: ${bodyTxt || "No response"}`;
+        lastSyncError = `Đăng nhập SSI thất bại với HTTP ${authResponse.status}: ${bodyTxt || "Không có phản hồi"}\n💡 GIẢI PHÁP TRIỆT ĐỂ: Khi xuất bản (Publish) ứng dụng, hosting đổi địa chỉ IP. Vui lòng cập nhật IP máy chủ mới trong danh sách IP phê duyệt của Client ID phía SSI.`;
       }
     } catch (err: any) {
-      lastSyncError = `SSI Sync exception: ${err?.message || err}`;
+      lastSyncError = `Lỗi ngoại lệ kết nối SSI: ${err?.message || err}\n💡 GIẢI PHÁP TRIỆT ĐỂ: Đảm bảo IP máy chủ hiện tại đã được đăng ký và phê duyệt với SSI FCData.`;
       console.warn(`⚠️ Kết nối SSI FCData thất bại: ${lastSyncError}. Sang chế độ VNDIRECT/TCBS...`);
     }
   }
@@ -501,7 +568,24 @@ setInterval(() => {
 // API Routes
 
 // 1. Get entire market data feed (enhanced with sync status)
-app.get("/api/market-data", (req, res) => {
+app.get("/api/market-data", async (req, res) => {
+  if (req.query.force === "true") {
+    if (!isRefreshingRealtime) {
+      console.log("⚡ Nhận yêu cầu đồng bộ SSI thủ công từ Client...");
+      try {
+        await syncRealMarketPrices();
+      } catch (err: any) {
+        console.warn("Lỗi đồng bộ thủ công:", err);
+      }
+    } else {
+      let waitMs = 0;
+      while (isRefreshingRealtime && waitMs < 12000) {
+        await sleep(200);
+        waitMs += 200;
+      }
+    }
+  }
+
   res.json({
     assets: marketAssets,
     indices: marketIndices,
@@ -518,6 +602,7 @@ app.get("/api/market-data", (req, res) => {
       lastPriceAttempt: ssiSyncDetails.lastPriceAttempt,
       lastSsiResponseStatus: ssiSyncDetails.lastSsiResponseStatus,
       lastSsiResponseBody: ssiSyncDetails.lastSsiResponseBody,
+      serverPublicIP: ssiSyncDetails.serverPublicIP
     }
   });
 });

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { BrokerageAccount, BrokerType, PortfolioPosition } from '../types';
-import { formatVND } from '../utils';
-import { Plus, Trash2, Edit2, ShieldAlert, Check, Landmark, X } from 'lucide-react';
+import { BrokerageAccount, BrokerType, PortfolioPosition, ManualTransaction } from '../types';
+import { formatVND, formatShares } from '../utils';
+import { Plus, Trash2, Edit2, ShieldAlert, Check, Landmark, X, Settings, Receipt } from 'lucide-react';
 import ImportDataTab from './ImportDataTab';
+import AccountManageModal from './AccountManageModal';
 
 interface AccountsTabProps {
   accounts: BrokerageAccount[];
+  positions: PortfolioPosition[];
   onAddAccount: (account: Omit<BrokerageAccount, 'id'>) => void;
   onEditAccount: (id: string, updated: Partial<BrokerageAccount>) => void;
   onDeleteAccount: (id: string) => void;
   onImportPositions: (accountId: string, newPositions: Omit<PortfolioPosition, 'id' | 'currentPrice' | 'updatedAt'>[], mode: 'add' | 'overwrite') => void;
   onAddHistoryItem: (history: { fileName: string; accountId: string; status: 'Completed' | 'Failed'; importedCount: number; failedCount: number; errorLog?: string[] }) => void;
+  onRecordManualTransaction: (accountId: string, tx: Omit<ManualTransaction, 'id' | 'accountId' | 'confirmedAt' | 'createdAt'>) => void;
 }
 
 export interface BrokerDetail {
@@ -110,11 +113,13 @@ export const SECURITIES_COMPANIES: BrokerDetail[] = [...RAW_SECURITIES_COMPANIES
 
 export default function AccountsTab({
   accounts,
+  positions,
   onAddAccount,
   onEditAccount,
   onDeleteAccount,
   onImportPositions,
   onAddHistoryItem,
+  onRecordManualTransaction,
 }: AccountsTabProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [name, setName] = useState('');
@@ -127,6 +132,16 @@ export default function AccountsTab({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editCash, setEditCash] = useState<number>(0);
+
+  // New features subaccount states (US-ONBOARD-001)
+  const [newSubAccountType, setNewSubAccountType] = useState<'THUONG' | 'MARGIN' | 'PHAI_SINH' | 'TRAI_PHIEU'>('THUONG');
+  const [newFeeRate, setNewFeeRate] = useState<number>(0.15);
+  const [newInitialCash, setNewInitialCash] = useState<number>(0);
+  const [newInitialLoadStatus, setNewInitialLoadStatus] = useState<boolean>(true); // true = start empty (isInitialLoaded = true), false = load later (isInitialLoaded = false)
+
+  // Managed broker for opening Sub accounts modal (US-ONBOARD-002)
+  const [managedBroker, setManagedBroker] = useState<string | null>(null);
+  const [selectedLogAccount, setSelectedLogAccount] = useState<BrokerageAccount | null>(null);
 
   const [isSecurityBannerDismissed, setIsSecurityBannerDismissed] = useState(() => {
     return localStorage.getItem('assman_security_banner_dismissed') === 'true';
@@ -148,12 +163,21 @@ export default function AccountsTab({
     onAddAccount({
       name: name.trim(),
       broker: company.shortName,
-      cashBalance: 0,
+      cashBalance: newInitialCash,
       color,
+      subAccountType: newSubAccountType,
+      feeRate: newFeeRate,
+      taxRate: 0.1,
+      isInitialLoaded: newInitialLoadStatus,
+      transactions: []
     });
 
     // Reset inputs
     setName('');
+    setNewInitialCash(0);
+    setNewFeeRate(0.15);
+    setNewSubAccountType('THUONG');
+    setNewInitialLoadStatus(true);
     setShowAddForm(false);
   };
 
@@ -255,6 +279,34 @@ export default function AccountsTab({
                     ))}
                   </select>
                 </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-zinc-300 block">Tiểu khoản đầu tiên khởi tạo</label>
+                  <select
+                    value={newSubAccountType}
+                    onChange={(e) => setNewSubAccountType(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-zinc-800 bg-zinc-950 text-zinc-300 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-emerald-500 cursor-pointer text-xs"
+                  >
+                    <option value="THUONG">Tài khoản Thường (Đầu tư cơ bản / Tích sản)</option>
+                    <option value="MARGIN">Tài khoản Ký Quỹ (Margin / Sức mua)</option>
+                    <option value="PHAI_SINH">Tài khoản Phái Sinh (Phép Hợp đồng tương lai)</option>
+                    <option value="TRAI_PHIEU">Tài khoản Trái phiếu & ETF Chuyên biệt</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-zinc-300 block">Biểu phí giao dịch ban đầu (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max="1.0"
+                    required
+                    value={newFeeRate}
+                    onChange={(e) => setNewFeeRate(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono text-xs"
+                  />
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -281,6 +333,52 @@ export default function AccountsTab({
                       ));
                     })()}
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-zinc-300 block">Số dư tiền mặt ban đầu (VND)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Ví dụ: 50000000 (Mặc định bằng 0)"
+                    value={newInitialCash || ''}
+                    onChange={(e) => setNewInitialCash(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-zinc-800 bg-zinc-950 text-zinc-100 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono text-xs"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="font-semibold text-zinc-300 block">Đã có danh mục cổ phiếu sẵn chưa?</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewInitialLoadStatus(true)}
+                      className={`py-2 rounded-lg border text-center transition cursor-pointer text-[10px] ${
+                        newInitialLoadStatus 
+                        ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400 font-bold'
+                        : 'bg-zinc-950 border-zinc-850 text-zinc-400 hover:text-zinc-350'
+                      }`}
+                    >
+                      Khởi tạo Trống (Nhập tay)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewInitialLoadStatus(false)}
+                      className={`py-2 rounded-lg border text-center transition cursor-pointer text-[10px] ${
+                        !newInitialLoadStatus
+                        ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400 font-bold'
+                        : 'bg-zinc-950 border-zinc-850 text-zinc-400 hover:text-zinc-350'
+                      }`}
+                    >
+                      Nạp sau (OCR / Excel)
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-zinc-550 leading-normal italic">
+                    {newInitialLoadStatus 
+                      ? '• Hoàn thành sẵn sàng để tự ghi chép mua bán.' 
+                      : '• Cho phép nạp OCR, Excel hoặc nhập vị thế 01 lần tại mục Import Data.'
+                    }
+                  </p>
                 </div>
               </div>
 
@@ -329,18 +427,18 @@ export default function AccountsTab({
                 <div
                   key={acc.id}
                   id={`account-card-${acc.id}`}
-                  className="bg-zinc-900/50 border border-zinc-800/80 p-5 rounded-2xl relative shadow-xs hover:border-zinc-700/60 transition flex flex-col justify-between"
+                  className="bg-zinc-900/50 border border-zinc-800/80 p-5 rounded-xl relative shadow-xs hover:border-zinc-750/70 transition flex flex-col space-y-4"
                 >
                   {/* Visual Left colored indicator board */}
                   <div
                     style={{ backgroundColor: acc.color }}
-                    className="absolute top-0 left-0 w-1.5 h-full rounded-l-2xl"
+                    className="absolute top-0 left-0 w-1.5 h-full rounded-l-xl"
                   />
 
                   {/* Account Header */}
                   <div>
                     <div className="flex justify-between items-start pl-2">
-                      <div className="w-full">
+                       <div className="w-full">
                         {isEditing ? (
                           <input
                             id={`edit-acc-name-${acc.id}`}
@@ -350,33 +448,55 @@ export default function AccountsTab({
                             className="text-sm font-bold text-zinc-100 border-b border-zinc-700 bg-zinc-950 focus:outline-hidden focus:border-emerald-500 py-0.5 px-1.5 w-full rounded-md"
                           />
                         ) : (
-                          <h4 className="font-bold text-sm text-zinc-100 font-sans">{acc.name}</h4>
+                          <h4 className="font-semibold text-sm text-zinc-100 font-sans tracking-tight">{acc.name}</h4>
                         )}
-                        <span className="inline-block mt-2 font-mono text-[10px] font-bold px-1.5 py-0.5 bg-zinc-850 border border-zinc-750 text-zinc-400 rounded-sm">
-                          Broker: {acc.broker}
-                        </span>
                       </div>
 
-                      <button
-                        onClick={() => {
-                          if (isEditing) {
-                            handleSaveEdit(acc.id);
-                          } else {
-                            setEditingId(acc.id);
-                            setEditName(acc.name);
-                            setEditCash(acc.cashBalance);
-                          }
-                        }}
-                        className="text-zinc-500 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer shrink-0 ml-2"
-                        title={isEditing ? "Lưu thay đổi" : "Sửa tài khoản"}
-                      >
-                        {isEditing ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Edit2 className="h-3.5 w-3.5" />}
-                      </button>
+                      <div className="flex items-center space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Fetch freshest states from the accounts array
+                            const refreshedAcc = accounts.find(a => a.id === acc.id) || acc;
+                            setSelectedLogAccount(refreshedAcc);
+                          }}
+                          className="text-zinc-500 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer shrink-0"
+                          title="Xem nhật ký giao dịch"
+                        >
+                          <Receipt className="h-3.5 w-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isEditing) {
+                              handleSaveEdit(acc.id);
+                            } else {
+                              setEditingId(acc.id);
+                              setEditName(acc.name);
+                              setEditCash(acc.cashBalance);
+                            }
+                          }}
+                          className="text-zinc-500 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer shrink-0"
+                          title={isEditing ? "Lưu thay đổi" : "Sửa tài khoản"}
+                        >
+                          {isEditing ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Edit2 className="h-3.5 w-3.5" />}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setManagedBroker(acc.broker)}
+                          className="text-zinc-500 hover:text-emerald-400 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer shrink-0"
+                          title="Quản lý giao dịch thủ công & Tiểu khoản"
+                        >
+                          <Settings className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Balance display or modify input */}
-                    <div className="mt-4 pl-2 space-y-1">
-                      <span className="text-[10px] font-mono text-zinc-500 block uppercase tracking-wide select-none">Tiền mặt ròng (Cash)</span>
+                    <div className="mt-3 pl-2 space-y-1">
+                      <span className="text-[9px] font-mono font-medium text-zinc-500 block uppercase tracking-wider select-none">Sức mua / Tiền mặt khả dụng</span>
                       {isEditing ? (
                         <div className="flex items-center space-x-1 mt-1">
                           <input
@@ -397,15 +517,18 @@ export default function AccountsTab({
                   </div>
 
                   {/* Account Footer details */}
-                  <div className="mt-5 pt-3 border-t border-zinc-800/60 pl-2 flex justify-between items-center select-none">
-                    <span className="text-[9px] font-mono text-zinc-500">
-                      {acc.lastImportedAt
+                  <div className="pt-3 border-t border-zinc-850 py-1 pl-2 flex justify-between items-center select-none text-[10px] text-zinc-550">
+                    <span className="font-mono">
+                      {acc.transactions && acc.transactions.length > 0
+                        ? `${acc.transactions.length} lệnh ghi tay`
+                        : acc.lastImportedAt
                         ? `Đồng bộ: ${new Date(acc.lastImportedAt).toLocaleDateString('vi-VN')}`
-                        : 'Chưa có vị thế nào'
+                        : 'Mới liên kết'
                       }
                     </span>
 
                     <button
+                      type="button"
                       id={`delete-account-btn-${acc.id}`}
                       onClick={() => {
                         if (confirm(`Bạn có chắc chắn muốn xóa tài khoản "${acc.name}"? Thao tác này sẽ xóa tất cả danh mục của tài khoản này.`)) {
@@ -427,7 +550,7 @@ export default function AccountsTab({
               <div className="col-span-full bg-zinc-950 rounded-2xl py-12 text-center text-zinc-500 border border-dashed border-zinc-800 select-none w-full">
                 <Landmark className="h-8 w-8 mx-auto text-zinc-700 mb-2" />
                 <p className="text-xs font-semibold text-zinc-400">Chưa thiết lập tài khoản CTCK nào.</p>
-                <p className="text-[10px] text-zinc-500 mt-1">Vui lòng nhấn nút "Khai sinh tài khoản mới" ở góc trên để liên kết tài khoản đầu tiên của bạn.</p>
+                <p className="text-[10px] text-zinc-550 mt-1">Vui lòng nhấn nút "Khai sinh tài khoản mới" ở góc trên để liên kết tài khoản đầu tiên của bạn.</p>
               </div>
             )}
           </div>
@@ -449,6 +572,123 @@ export default function AccountsTab({
         )}
 
       </div>
+
+      {managedBroker && (
+        <AccountManageModal
+          brokerName={managedBroker}
+          accounts={accounts}
+          positions={positions}
+          onClose={() => setManagedBroker(null)}
+          onAddAccount={onAddAccount}
+          onEditAccount={onEditAccount}
+          onDeleteAccount={onDeleteAccount}
+          onRecordManualTransaction={onRecordManualTransaction}
+        />
+      )}
+
+      {selectedLogAccount && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-zinc-950/95 border border-zinc-800 w-full max-w-4xl max-h-[85vh] rounded-2xl flex flex-col shadow-2xl relative">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-zinc-850 flex justify-between items-center select-none">
+              <div className="flex items-center space-x-2.5">
+                <div style={{ backgroundColor: selectedLogAccount.color }} className="w-2.5 h-6 rounded-full shrink-0" />
+                <div>
+                  <h3 className="text-sm font-extrabold text-zinc-150 uppercase tracking-wide">
+                    Nhật ký giao dịch: {selectedLogAccount.name}
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 font-mono">
+                    CTCK: {selectedLogAccount.broker} • Sức mua: {formatVND(selectedLogAccount.cashBalance)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedLogAccount(null)}
+                className="text-zinc-500 hover:text-zinc-300 p-1.5 rounded-lg hover:bg-zinc-900 transition cursor-pointer"
+                title="Đóng nhật ký"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Content - Log list */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left font-sans text-xs text-zinc-400 select-text">
+                  <thead>
+                    <tr className="border-b border-zinc-850 pb-2 text-zinc-500 uppercase text-[9px] font-mono tracking-wider">
+                      <th className="pb-2 font-semibold">Thời gian</th>
+                      <th className="pb-2 font-semibold text-center">Lệnh</th>
+                      <th className="pb-2 font-semibold">Mã CK</th>
+                      <th className="pb-2 font-semibold text-right">Volume</th>
+                      <th className="pb-2 font-semibold text-right">Giá</th>
+                      <th className="pb-2 font-semibold text-right">Dòng tiền</th>
+                      <th className="pb-2 font-semibold text-right">P&L Chốt</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-900">
+                    {selectedLogAccount.transactions?.map(tx => (
+                      <tr key={tx.id} className="hover:bg-zinc-950/30 transition">
+                        <td className="py-2.5 text-zinc-450 font-mono">
+                          {tx.tradeDate || new Date(tx.confirmedAt).toLocaleDateString('vi-VN')}
+                        </td>
+                        <td className="py-2.5 text-center font-bold">
+                          <span className={`px-1.5 py-0.5 rounded-sm font-mono text-[9px] font-black ${
+                            tx.type === 'BUY' ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'
+                          }`}>
+                            {tx.type === 'BUY' ? 'MUA' : 'BÁN'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-zinc-200 font-extrabold">{tx.symbol}</td>
+                        <td className="py-2.5 text-right font-mono font-bold text-zinc-300">
+                          {formatShares(tx.quantity)}
+                        </td>
+                        <td className="py-2.5 text-right font-mono text-zinc-350">
+                          {formatVND(tx.price)}
+                        </td>
+                        <td className={`py-2.5 text-right font-mono font-semibold ${
+                          tx.type === 'BUY' ? 'text-red-400' : 'text-emerald-400'
+                        }`}>
+                          {tx.type === 'BUY' ? '-' : '+'}{formatVND(Math.abs(tx.netAmount))}
+                        </td>
+                        <td className="py-2.5 text-right font-mono font-bold">
+                          {tx.type === 'SELL' ? (
+                            <span className={tx.realizedPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                              {tx.realizedPnL >= 0 ? '+' : ''}{formatVND(tx.realizedPnL)}
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {(!selectedLogAccount.transactions || selectedLogAccount.transactions.length === 0) && (
+                      <tr>
+                        <td colSpan={7} className="text-center py-12 text-zinc-600 font-mono text-[11px]">
+                          Chưa ghi nhận giao dịch thủ công nào trong tiểu khoản này
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-zinc-850 bg-zinc-950/50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedLogAccount(null)}
+                className="px-6 py-1.5 bg-zinc-850 hover:bg-zinc-800 text-zinc-300 font-bold rounded-lg cursor-pointer transition text-xs"
+              >
+                Đóng nhật ký
+              </button>
+            </div>
+            
+          </div>
+        </div>
+      )}
 
     </div>
   );
