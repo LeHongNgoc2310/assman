@@ -13,16 +13,51 @@ dotenv.config();
 const serverSupabaseUrl = process.env.SUPABASE_URL;
 const serverSupabaseServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
+const isValidSupabaseUrl = (url: string | undefined): url is string => {
+  if (!url) return false;
+  const lowercase = url.toLowerCase();
+  if (
+    url.includes("<") || 
+    url.includes(">") || 
+    lowercase.includes("your-project") || 
+    lowercase.includes("placeholder") ||
+    lowercase.includes("your-supabase-url")
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+};
+
+const isValidSupabaseKey = (key: string | undefined): key is string => {
+  if (!key) return false;
+  const lowercase = key.toLowerCase();
+  if (
+    key.includes("<") || 
+    key.includes(">") || 
+    lowercase.includes("your-service-role") || 
+    lowercase.includes("your-anon-key") || 
+    lowercase.includes("placeholder")
+  ) {
+    return false;
+  }
+  return key.trim().length > 10;
+};
+
 let backendSupabase: any = null;
-if (serverSupabaseUrl && serverSupabaseServiceRole) {
+if (isValidSupabaseUrl(serverSupabaseUrl) && isValidSupabaseKey(serverSupabaseServiceRole)) {
   try {
     backendSupabase = createClient(serverSupabaseUrl, serverSupabaseServiceRole);
     console.log("✅ Supabase Auth connection successfully established inside backend server.");
-  } catch (err) {
-    console.error("❌ Error initializing backend Supabase client:", err);
+  } catch (err: any) {
+    console.warn("⚠️ Supabase client initialization declined with parameter error:", err?.message || err);
   }
 } else {
-  console.log("ℹ️ Server-side Supabase credentials are empty. Running backend API routes in unauthenticated sandbox mode.");
+  console.log("ℹ️ Server-side Supabase credentials are missing, invalid, or placeholder. Running backend API routes in unauthenticated sandbox mode.");
 }
 
 // Authentication middleware to check bearer JWT tokens
@@ -191,16 +226,16 @@ detectPublicIP();
 // Sync Real Stock Market Prices from VNSTOCK or SSI FCData API
 let isRefreshingRealtime = false;
 let lastSyncedAt: Date | null = new Date();
-let lastSyncedSource = "SSI MQTT Real-time";
+let lastSyncedSource = "VNSTOCK";
 let lastSyncError: string | null = null;
 let ssiSyncDetails = {
-  isConfigured: true,
-  hasConsumerId: true,
-  hasConsumerSecret: true,
-  lastAuthAttempt: new Date().toISOString(),
+  isConfigured: false,
+  hasConsumerId: false,
+  hasConsumerSecret: false,
+  lastAuthAttempt: null as string | null,
   lastPriceAttempt: null as string | null,
-  lastSsiResponseStatus: 200,
-  lastSsiResponseBody: "Đang kết nối WebSocket SSI iBoard...",
+  lastSsiResponseStatus: null as number | null,
+  lastSsiResponseBody: "Chưa cấu hình hoặc kết hợp SSI MQTT.",
   serverPublicIP: "Đang xác định..."
 };
 
@@ -249,36 +284,99 @@ const LeTableDataList = root.lookupType("LeTableDataList");
 
 let ssiMqttClient: any = null;
 
-function startSsiMqttSync() {
-  const BROKER_URL = "wss://price-streaming.ssi.com.vn:443/mqtt";
-  console.log("🔌 Khởi tạo kết nối SSI MQTT Real-time Streaming...");
+async function startSsiMqttSync() {
+  const ssiId = process.env.SSI_CONSUMER_ID;
+  const ssiSecret = process.env.SSI_CONSUMER_SECRET || process.env.SSI_CONSUMER_SECR;
+
+  ssiSyncDetails.serverPublicIP = serverPublicIP;
+
+  if (!ssiId || !ssiSecret) {
+    console.log("ℹ️ Không tìm thấy cấu hình SSI_CONSUMER_ID & SSI_CONSUMER_SECRET. Sử dụng nguồn dữ liệu VNSTOCK làm nguồn trực tiếp chủ đạo.");
+    ssiSyncDetails.isConfigured = false;
+    ssiSyncDetails.hasConsumerId = false;
+    ssiSyncDetails.hasConsumerSecret = false;
+    ssiSyncDetails.lastSsiResponseBody = "Mời cấu hình Client ID & Consumer Secret trong Settings > Secrets để sử dụng MQTT iBoard.";
+    lastSyncedSource = "VNSTOCK";
+    return;
+  }
+
+  ssiSyncDetails.isConfigured = true;
+  ssiSyncDetails.hasConsumerId = true;
+  ssiSyncDetails.hasConsumerSecret = true;
   ssiSyncDetails.lastAuthAttempt = new Date().toISOString();
-  ssiSyncDetails.lastSsiResponseBody = "Đang thiết lập kết nối WebSocket...";
-  
-  const options = {
-    username: "mqtt-ssi",
-    password: "mqtt-ssi",
-    clientId: "tradingview-" + Math.floor(1000 + Math.random() * 9000),
-    protocolVersion: 5 as const,
-    rejectUnauthorized: false,
-    reconnectPeriod: 5000,
-  };
+  ssiSyncDetails.lastSsiResponseBody = "Đang lấy AccessToken từ SSI FCData...";
 
   try {
-    if (ssiMqttClient) {
-      ssiMqttClient.end();
+    const authUrl = "https://fc-data.ssi.com.vn/api/v2/Market/AccessToken";
+    const authResponse = await fetchWithTimeout(authUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({
+        consumerID: ssiId,
+        consumerSecret: ssiSecret
+      })
+    }, 6000);
+
+    ssiSyncDetails.lastSsiResponseStatus = authResponse.status;
+    const authBody = await authResponse.text();
+    
+    if (!authResponse.ok) {
+      const errMsg = `Đăng nhập SSI FCData thất bại (HTTP ${authResponse.status}): ${authBody.substring(0, 150)}`;
+      console.warn(`⚠️ ssi-auth: ${errMsg}`);
+      ssiSyncDetails.lastSsiResponseBody = errMsg;
+      lastSyncError = errMsg;
+      lastSyncedSource = "VNSTOCK";
+      return;
     }
+
+    let authData: any;
+    try {
+      authData = JSON.parse(authBody);
+    } catch {
+      authData = {};
+    }
+
+    const accessToken = authData.token || (authData.data && authData.data.accessToken) || authData.accessToken;
+    if (!accessToken) {
+      const errMsg = "Không lấy được accessToken từ phản hồi SSI. Vui lòng kiểm tra lại ID/Secret.";
+      console.warn(`⚠️ ssi-auth: ${errMsg}`);
+      ssiSyncDetails.lastSsiResponseBody = errMsg;
+      lastSyncError = errMsg;
+      lastSyncedSource = "VNSTOCK";
+      return;
+    }
+
+    console.log("🌸 Đăng nhập SSI thành công! Đang thiết lập kênh WebSocket...");
+    ssiSyncDetails.lastSsiResponseBody = "Lấy Token thành công! Đang thiết lập kết nối WebSocket...";
+
+    const BROKER_URL = "wss://price-streaming.ssi.com.vn/mqtt";
     
+    const options = {
+      username: ssiId,
+      password: accessToken,
+      clientId: "tradingview-" + Math.floor(1000 + Math.random() * 9000),
+      protocolVersion: 4 as const,
+      rejectUnauthorized: false,
+      reconnectPeriod: 10000,
+    };
+
+    if (ssiMqttClient) {
+      try {
+        ssiMqttClient.end();
+      } catch (e) {}
+    }
+
     ssiMqttClient = mqtt.connect(BROKER_URL, options);
-    
+
     ssiMqttClient.on('connect', () => {
       console.log("🟢 Kết nối thành công lên server SSI MQTT iBoard Streaming!");
       lastSyncedSource = "SSI MQTT Real-time";
       lastSyncedAt = new Date();
       lastSyncError = null;
-      ssiSyncDetails.isConfigured = true;
       ssiSyncDetails.lastSsiResponseStatus = 200;
-      ssiSyncDetails.lastAuthAttempt = new Date().toISOString();
       ssiSyncDetails.lastSsiResponseBody = "Đầy đủ: Kết nối máy chủ Realtime Streaming SSI iBoard trực tiếp thành công!";
 
       const listToSub = [
@@ -288,7 +386,7 @@ function startSsiMqttSync() {
 
       listToSub.forEach(sym => {
         const topic = `l/${sym}/MAIN`;
-        ssiMqttClient.subscribe(topic, { qos: 1 }, (err: any) => {
+        ssiMqttClient.subscribe(topic, { qos: 0 }, (err: any) => {
           if (err) {
             console.error(`❌ Lỗi đăng ký nhận mã ${sym}:`, err.message);
           }
@@ -374,18 +472,22 @@ function startSsiMqttSync() {
       console.warn("⚠️ Lỗi kết nối SSI MQTT:", err.message);
       lastSyncError = `Lỗi kết nối SSI MQTT: ${err.message}`;
       ssiSyncDetails.lastSsiResponseStatus = 502;
-      ssiSyncDetails.lastSsiResponseBody = `Mất kết nối: ${err.message}`;
+      ssiSyncDetails.lastSsiResponseBody = `Mất kết nối: ${err.message}. IP Máy chủ hiện tại chưa được đăng ký trong whitelist của SSI Portal.`;
+      lastSyncedSource = "VNSTOCK";
     });
 
     ssiMqttClient.on('offline', () => {
       console.warn("⚠️ Client SSI MQTT ngoại tuyến.");
-      ssiSyncDetails.lastSsiResponseBody = "Ngoại tuyến (Offline)";
+      ssiSyncDetails.lastSsiResponseBody = "Ngoại tuyến (Offline) - Vui lòng kiểm tra whitelist IP hiện tại tại SSI Developer Portal.";
+      lastSyncedSource = "VNSTOCK";
     });
 
-  } catch (initErr: any) {
-    console.error("⚠️ Lỗi khởi tạo SSI MQTT:", initErr.message);
-    lastSyncError = `Khởi tạo SSI MQTT lỗi: ${initErr.message}`;
+  } catch (err: any) {
+    console.error("⚠️ Lỗi kết nối SSI MQTT:", err.message || err);
+    lastSyncError = `Khởi tạo SSI MQTT lỗi: ${err.message || err}`;
     ssiSyncDetails.lastSsiResponseStatus = 500;
+    ssiSyncDetails.lastSsiResponseBody = `Ngoại lệ: ${err.message}`;
+    lastSyncedSource = "VNSTOCK";
   }
 }
 
@@ -400,18 +502,19 @@ async function syncRealMarketPrices() {
   if (isRefreshingRealtime) return;
   isRefreshingRealtime = true;
 
-  // The new real-time SSI MQTT streaming connection is public and auto-configured
-  ssiSyncDetails.isConfigured = true;
-  ssiSyncDetails.hasConsumerId = true;
-  ssiSyncDetails.hasConsumerSecret = true;
   ssiSyncDetails.serverPublicIP = serverPublicIP;
 
-  if (!ssiMqttClient || !ssiMqttClient.connected) {
-    console.log("🔌 Khởi động đồng bộ/kết nối lại SSI MQTT...");
-    ssiSyncDetails.lastAuthAttempt = new Date().toISOString();
-    startSsiMqttSync();
+  if (process.env.SSI_CONSUMER_ID && process.env.SSI_CONSUMER_SECRET) {
+    if (!ssiMqttClient || !ssiMqttClient.connected) {
+      console.log("🔌 Khởi động đồng bộ/kết nối lại SSI MQTT...");
+      startSsiMqttSync();
+    } else {
+      console.log("🟢 Hệ thống SSI MQTT iBoard Real-time đang duy trì trạng thái kết nối tốt.");
+    }
   } else {
-    console.log("🟢 Hệ thống SSI MQTT iBoard Real-time đang duy trì trạng thái kết nối tốt.");
+    ssiSyncDetails.isConfigured = false;
+    ssiSyncDetails.hasConsumerId = false;
+    ssiSyncDetails.hasConsumerSecret = false;
   }
 
   // Fallback to VNDIRECT & TCBS public source (previously referred to as VNSTOCK in client indicators)
@@ -563,7 +666,7 @@ async function syncRealMarketPrices() {
     if (ssiMqttClient && ssiMqttClient.connected) {
       lastSyncedSource = "SSI MQTT Real-time";
     } else {
-      lastSyncedSource = "SSI MQTT Real-time"; // Keep displaying SSI MQTT as main source, or VNSTOCK backup dynamically
+      lastSyncedSource = "VNSTOCK";
     }
   }
   isRefreshingRealtime = false;
@@ -572,10 +675,19 @@ async function syncRealMarketPrices() {
 // Initial Sync on boot
 syncRealMarketPrices().catch(err => console.error("Initial sync on boot failed", err));
 
-// Sync from VNSTOCK every 60 seconds
+// Sync from VNSTOCK every 15 seconds for hot real-time updates
 setInterval(() => {
   syncRealMarketPrices().catch(err => console.error("Interval sync failed", err));
-}, 60000);
+}, 15000);
+
+// baseline values for mean reversion
+const BASE_MARKET_ASSETS: { [symbol: string]: number } = {
+  HPG: 28500, FPT: 135200, VNM: 66500, VCB: 91200, TCB: 24500, SSI: 35400, VND: 20100, MWG: 61200, VIC: 42500, VHM: 41100, MSN: 74500, ACB: 27900, E1VFVN30: 22100, FUEVFVND: 31500, VN30F1M: 1285.5
+};
+
+const BASE_MARKET_INDICES: { [symbol: string]: number } = {
+  VNINDEX: 1285.50, VN30: 1292.15, HNX: 243.20, UPCOM: 95.80
+};
 
 // Fluctuate prices slightly every 5 seconds to simulate dynamic near-realtime market changes on top of synced data
 setInterval(() => {
@@ -584,6 +696,14 @@ setInterval(() => {
     const pct = (Math.random() * 0.2 - 0.1) / 100;
     const oldPrice = asset.price;
     let newPrice = oldPrice * (1 + pct);
+
+    // Apply mean-reverting force towards base price when real-time sync is offline
+    const isOffline = !ssiMqttClient || !ssiMqttClient.connected;
+    if (isOffline) {
+      const basePrice = BASE_MARKET_ASSETS[asset.symbol] || asset.prevClose;
+      // Pull back to baseline by 15% on each step to bound drift
+      newPrice = newPrice + 0.15 * (basePrice - newPrice);
+    }
     
     if (asset.type === 'DERIVATIVE') {
       newPrice = Math.round(newPrice * 10) / 10;
@@ -606,7 +726,16 @@ setInterval(() => {
   marketIndices = marketIndices.map(idx => {
     const pct = (Math.random() * 0.1 - 0.05) / 100;
     const oldPrice = idx.price;
-    const newPrice = Math.round((oldPrice * (1 + pct)) * 100) / 100;
+    let newPrice = oldPrice * (1 + pct);
+
+    // Apply mean-reverting force towards base price when real-time sync is offline
+    const isOffline = !ssiMqttClient || !ssiMqttClient.connected;
+    if (isOffline) {
+      const baseIdxPrice = BASE_MARKET_INDICES[idx.symbol] || idx.prevClose;
+      newPrice = newPrice + 0.15 * (baseIdxPrice - newPrice);
+    }
+
+    newPrice = Math.round(newPrice * 100) / 100;
     const change = Math.round((newPrice - idx.prevClose) * 100) / 100;
     const changePercent = idx.prevClose > 0 ? Math.round((change / idx.prevClose) * 10000) / 100 : 0;
 

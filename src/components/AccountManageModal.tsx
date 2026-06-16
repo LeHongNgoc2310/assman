@@ -177,8 +177,15 @@ export default function AccountManageModal({
       return;
     }
 
-    // BR-006: Multiple constraints
+    // Auto-correction for Vietnamese thousand-VND stock/ETF units
     const isPhaiSinh = activeSubAccount?.subAccountType === 'PHAI_SINH';
+    let finalPrice = txPrice;
+    if (!isPhaiSinh && finalPrice < 1000 && finalPrice > 0) {
+      finalPrice = finalPrice * 1000;
+      setTxPrice(finalPrice);
+    }
+
+    // BR-006: Multiple constraints
     if (isPhaiSinh) {
       if (txQty % 1 !== 0) {
         alert("Đối với tiểu khoản phái sinh, số lượng số hợp đồng phải là nguyên số (bội số của 1)");

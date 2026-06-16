@@ -123,11 +123,22 @@ export default function ImportDataTab({
         throw new Error(result.error || "Không thể trích xuất thông tin danh mục qua Gemini API.");
       }
 
-      const extracted: DraftPosition[] = result.positions.map((p: any) => ({
-        stockSymbol: p.stockSymbol ? p.stockSymbol.toUpperCase().trim() : '',
-        quantity: Number(p.quantity) || 0,
-        averageCostPrice: Number(p.averageCostPrice) || 0
-      })).filter((p: any) => p.stockSymbol && p.quantity > 0);
+      const extracted: DraftPosition[] = result.positions.map((p: any) => {
+        const symbol = p.stockSymbol ? p.stockSymbol.toUpperCase().trim() : '';
+        let avgPrice = Number(p.averageCostPrice) || 0;
+        
+        // Safety guard for Vietnamese stock / ETF quotes under 1000 VND (excluding derivatives)
+        const isDerivative = symbol.includes("VN30F");
+        if (!isDerivative && avgPrice < 1000 && avgPrice > 0) {
+          avgPrice = avgPrice * 1000;
+        }
+
+        return {
+          stockSymbol: symbol,
+          quantity: Number(p.quantity) || 0,
+          averageCostPrice: avgPrice
+        };
+      }).filter((p: any) => p.stockSymbol && p.quantity > 0);
 
       // Validate results
       const warnings: string[] = [];
@@ -323,12 +334,18 @@ export default function ImportDataTab({
       return;
     }
 
+    let finalPrice = manualPrice;
+    const isDerivative = sym.includes("VN30F");
+    if (!isDerivative && finalPrice < 1000 && finalPrice > 0) {
+      finalPrice = finalPrice * 1000;
+    }
+
     setPreviewPositions([
       ...previewPositions,
       {
         stockSymbol: sym,
         quantity: manualQty,
-        averageCostPrice: manualPrice
+        averageCostPrice: finalPrice
       }
     ]);
 

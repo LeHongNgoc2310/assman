@@ -4,7 +4,41 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
 const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
 
-export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
+const isValidSupabaseUrl = (url: string | undefined): url is string => {
+  if (!url) return false;
+  const lowercase = url.toLowerCase();
+  if (
+    url.includes("<") || 
+    url.includes(">") || 
+    lowercase.includes("your-project") || 
+    lowercase.includes("placeholder") ||
+    lowercase.includes("your-supabase-url")
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+};
+
+const isValidSupabaseKey = (key: string | undefined): key is string => {
+  if (!key) return false;
+  const lowercase = key.toLowerCase();
+  if (
+    key.includes("<") || 
+    key.includes(">") || 
+    lowercase.includes("your-anon-key") || 
+    lowercase.includes("placeholder")
+  ) {
+    return false;
+  }
+  return key.trim().length > 10;
+};
+
+export const isSupabaseConfigured = isValidSupabaseUrl(supabaseUrl) && isValidSupabaseKey(supabaseAnonKey);
 
 let supabaseInstance: any = null;
 
