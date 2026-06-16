@@ -15,7 +15,8 @@ import {
   Coins, 
   Database,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  X
 } from 'lucide-react';
 
 interface DashboardTabProps {
@@ -39,6 +40,9 @@ export default function DashboardTab({
 }: DashboardTabProps) {
   
   // Local state for interactive details toggles
+  const [isDismissed, setIsDismissed] = useState<boolean>(() => {
+    return localStorage.getItem('hide_stale_accounts_warning') === 'true';
+  });
   const [expandedBrokers, setExpandedBrokers] = useState<Record<string, boolean>>({});
   const [expandedAssetTypes, setExpandedAssetTypes] = useState<Record<string, boolean>>({});
   const [expandedStocks, setExpandedStocks] = useState<Record<string, boolean>>({});
@@ -154,26 +158,41 @@ export default function DashboardTab({
     >
       
       {/* 1. Alerts Banner block */}
-      {staleCount > 0 && (
-        <div id="stale-accounts-banner" className="bg-amber-950/20 border border-amber-900/50 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in text-xs">
-          <div className="flex items-center space-x-3 text-amber-350">
-            <AlertCircle className="h-5 w-5 text-amber-550 shrink-0 mt-0.5 sm:mt-0" />
+      {staleCount > 0 && !isDismissed && (
+        <div id="stale-accounts-banner" className="bg-amber-950/20 border border-amber-900/40 rounded-2xl p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 animate-fade-in text-xs relative overflow-hidden">
+          <div className="flex items-start md:items-center space-x-3 text-amber-350 mr-8">
+            <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5 md:mt-0" />
             <div>
-              <p className="text-sm font-semibold text-amber-100">
-                Phát hiện {staleCount} tài khoản vị thế chưa đồng bộ gần đây
+              <p className="text-sm font-semibold text-amber-100 flex items-center gap-2">
+                <span>Phát hiện {staleCount} tài khoản vị thế chưa đồng bộ gần đây</span>
               </p>
-              <p className="text-xs text-amber-400">
-                Để dữ liệu P&L và Phân bổ tài sản chính xác, bạn nên thường xuyên đồng bộ hóa hoặc trích xuất lại danh mục mới.
+              <p className="text-xs text-amber-400/90 leading-relaxed mt-0.5">
+                Để dữ liệu P&L và Phân bổ tài chính xác, bạn nên đồng bộ hóa hoặc trích xuất lại danh mục mới. Bạn cũng có thể ẩn biểu tượng cảnh báo này.
               </p>
             </div>
           </div>
-          <button
-            id="stale-sync-now-btn"
-            onClick={() => onNavigateToTab('accounts')}
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-450 text-black rounded-xl text-xs font-semibold cursor-pointer transition whitespace-nowrap"
-          >
-            Đồng bộ ngay
-          </button>
+          <div className="flex items-center gap-2 md:self-center self-end">
+            <button
+              id="stale-sync-now-btn"
+              onClick={() => onNavigateToTab('accounts')}
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-450 text-black rounded-xl text-xs font-semibold cursor-pointer transition whitespace-nowrap active:scale-95"
+            >
+              Đồng bộ ngay
+            </button>
+            <button
+              id="stale-dismiss-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                localStorage.setItem('hide_stale_accounts_warning', 'true');
+                setIsDismissed(true);
+              }}
+              className="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-amber-400 hover:text-amber-300 border border-zinc-800 rounded-xl text-xs font-mono font-medium cursor-pointer transition whitespace-nowrap flex items-center justify-center space-x-1"
+              title="Ẩn hoàn toàn cảnh báo này"
+            >
+              <X className="h-3.5 w-3.5" />
+              <span>Ẩn cảnh báo</span>
+            </button>
+          </div>
         </div>
       )}
 
