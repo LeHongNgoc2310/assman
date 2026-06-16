@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BrokerageAccount, PortfolioPosition, AssetType } from '../types';
 import { csvTemplates, formatVND, formatShares } from '../utils';
+import { getAuthHeader } from '../supabaseClient';
+import { AssetlyText } from './AssetlyLogo';
 import { 
   Camera, 
   Upload, 
@@ -103,9 +105,13 @@ export default function ImportDataTab({
       const selectedAccount = accounts.find(a => a.id === selectedAccountId);
       const brokerName = selectedAccount ? selectedAccount.broker : 'SSI';
 
+      const authHeaders = await getAuthHeader();
       const response = await fetch('/api/ocr', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          ...authHeaders,
+          'Content-Type': 'application/json' 
+        },
         body: JSON.stringify({
           imageBase64: base64,
           broker: brokerName
@@ -658,7 +664,7 @@ export default function ImportDataTab({
                 </div>
                 
                 <p className="text-zinc-400 leading-relaxed text-[11px]">
-                  Giải pháp tích hợp giúp Assetly trực tiếp truy vấn số dư sở hữu thực tế từ các CTCK lớn (VNDIRECT, SSI, VPS, TCBS...). Loại bỏ hoàn toàn sự bất tiện khi phải tải file sao kê hay chụp hình thủ công.
+                  Giải pháp tích hợp giúp <AssetlyText className="text-[11px]" /> trực tiếp truy vấn số dư sở hữu thực tế từ các CTCK lớn (VNDIRECT, SSI, VPS, TCBS...). Loại bỏ hoàn toàn sự bất tiện khi phải tải file sao kê hay chụp hình thủ công.
                 </p>
 
                 <div className="space-y-4 pt-1">

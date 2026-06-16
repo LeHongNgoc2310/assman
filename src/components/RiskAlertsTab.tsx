@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertRule, PortfolioPosition, BrokerageAccount } from '../types';
 import { consolidatePositions, formatVND, formatPercent } from '../utils';
+import { AssetlyText } from './AssetlyLogo';
 import { 
   AlertTriangle, 
   Trash2, 
@@ -162,7 +163,7 @@ export default function RiskAlertsTab({
             <span>Chỉ mục Kiểm soát Rủi ro Tập trung (Concentration Risk Alert)</span>
           </p>
           <p className="text-zinc-400 leading-relaxed text-[11px]">
-            Đa số các quỹ chuyên nghiệp và chuyên gia tài sản khuyến nghị <strong>không nên phân bổ vượt quá 15% - 20% tổng NAV</strong> vào bất kỳ mã cổ phiếu đơn lẻ nào để tránh rủi ro sụt giảm mạnh. Assetly giúp bạn cấu hình các chỉ báo tự động giám sát. Khi giá cổ phiếu dịch chuyển khiến tỷ trọng vượt biên mức cài đặt, hệ thống sẽ trigger cảnh báo cho bạn ngay lập tức.
+            Đa số các quỹ chuyên nghiệp và chuyên gia tài sản khuyến nghị <strong>không nên phân bổ vượt quá 15% - 20% tổng NAV</strong> vào bất kỳ mã cổ phiếu đơn lẻ nào để tránh rủi ro sụt giảm mạnh. <AssetlyText className="text-[11px]" /> giúp bạn cấu hình các chỉ báo tự động giám sát. Khi giá cổ phiếu dịch chuyển khiến tỷ trọng vượt biên mức cài đặt, hệ thống sẽ trigger cảnh báo cho bạn ngay lập tức.
           </p>
         </div>
 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AssetType, AlertNotification, MarketIndex } from '../types';
 import { formatVND } from '../utils';
-import { Wallet, Bell, AlertTriangle, RefreshCw, Layers, LogOut, User, Clock } from 'lucide-react';
+import { Wallet, Bell, AlertTriangle, RefreshCw, LogOut, User, Clock } from 'lucide-react';
+import AssetlyLogo, { AssetlyText } from './AssetlyLogo';
 
 interface HeaderProps {
   totalNAV: number;
@@ -12,7 +13,7 @@ interface HeaderProps {
   lastRefreshTime: Date;
   notifications: AlertNotification[];
   onMarkAllRead: () => void;
-  currentUser: string | null;
+  currentUser: string | { name: string; avatarUrl?: string; email?: string } | null;
   isGuestUser: boolean;
   onLogout: () => void;
   onTriggerLogin: () => void;
@@ -91,6 +92,7 @@ export default function Header({
   }, [showNotifications]);
 
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
+  const [copiedIp, setCopiedIp] = useState(false);
 
   useEffect(() => {
     let ticking = false;
@@ -129,13 +131,12 @@ export default function Header({
           <div className="flex justify-between items-center h-16">
             
             {/* Logo & Brand */}
-            <div className="flex items-center space-x-3 select-none">
-              <div className="bg-emerald-500 text-zinc-950 p-2 rounded-lg flex items-center justify-center font-bold shadow-md shadow-emerald-500/10">
-                <Layers id="logo-icon" className="h-6 w-6 stroke-[2.5]" />
-              </div>
+            <div className="flex items-center space-x-1.5 select-none">
+              <AssetlyLogo size="sm" />
               <div>
-                <span className="font-sans text-xl font-bold tracking-tight text-white uppercase">
-                  Assetly <span className="text-zinc-500 font-normal capitalize italic">MVP</span>
+                <AssetlyText className="text-lg uppercase leading-none" />
+                <span className="text-zinc-500 font-medium capitalize italic text-[10px] ml-1">
+                  MVP
                 </span>
               </div>
             </div>
@@ -161,7 +162,7 @@ export default function Header({
                 </span>
 
                 {showDiagCard && (
-                  <div className="absolute top-[32px] left-0 mt-2 z-[9999] w-72 bg-[#121215] border border-zinc-800 rounded-xl p-4 shadow-2xl text-zinc-300 cursor-default pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                  <div className="absolute top-[32px] left-0 mt-2 z-[9999] w-80 bg-[#121215] border border-zinc-800 rounded-xl p-4 shadow-2xl text-zinc-300 cursor-default pointer-events-auto" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-2">
                       <span className="font-bold text-xs text-white">Chẩn đoán API SSI FCData</span>
                       <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
@@ -175,7 +176,7 @@ export default function Header({
                       </span>
                     </div>
 
-                    <div className="space-y-2 text-[11px]">
+                    <div className="space-y-2.5 text-[11px]">
                       <div className="flex justify-between items-center">
                         <span className="text-zinc-500">Cấu hình SSI Secrets:</span>
                         <span className={`font-mono font-bold ${marketDiagnostics?.isConfigured ? "text-emerald-400" : "text-amber-400"}`}>
@@ -203,11 +204,66 @@ export default function Header({
                         </div>
                       )}
 
+                      {/* Server Public IP displaying for easy Whitelisting */}
+                      {marketDiagnostics?.serverPublicIP && (
+                        <div className="border-t border-zinc-850 pt-2 mt-1 space-y-1.5">
+                          <div className="flex justify-between items-center bg-[#0c0c0e] px-2 py-1 rounded-lg border border-zinc-900">
+                            <span className="text-zinc-500 text-[10px]">IP Máy chủ (Vui lòng whitelist):</span>
+                            <div className="flex items-center space-x-1.5">
+                              <span className="font-mono text-zinc-150 select-all font-bold text-[10px]">
+                                {marketDiagnostics.serverPublicIP}
+                              </span>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    await navigator.clipboard.writeText(marketDiagnostics.serverPublicIP || '');
+                                    setCopiedIp(true);
+                                    setTimeout(() => setCopiedIp(false), 2000);
+                                  } catch (err) {}
+                                }}
+                                className="text-[9px] bg-zinc-800 hover:bg-zinc-700 font-bold px-1.5 py-0.5 rounded text-zinc-300 transition-colors select-none"
+                              >
+                                {copiedIp ? "Đã chép!" : "Chép IP"}
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[9px] text-[#8e8e93] leading-normal">
+                            💡 <b>Quan trọng:</b> Hệ thống SSI FCData bắt buộc phải đăng ký IP Whitelist trên cổng SSI Developer. Hãy sao chép IP trên và thêm vào bảng quản trị của client SSI.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Connection Error Message Logging */}
+                      {marketDiagnostics?.lastSyncError && (
+                        <div className="border-t border-zinc-850 pt-2 mt-1">
+                          <div className="bg-red-950/20 text-red-400 border border-red-900/40 p-2 rounded-lg text-[10px] leading-relaxed max-h-32 overflow-y-auto font-mono scrollbar-thin scrollbar-thumb-zinc-800">
+                            <span className="font-bold block text-red-300 mb-0.5">Nhật ký lỗi/Hướng dẫn:</span>
+                            <span className="whitespace-pre-line">{marketDiagnostics.lastSyncError}</span>
+                          </div>
+                        </div>
+                      )}
+
                       {!marketDiagnostics?.isConfigured && (
-                        <div className="text-[10px] text-amber-500/80 leading-relaxed border-t border-zinc-800/80 pt-2 mt-2">
+                        <div className="text-[10px] text-amber-500/80 leading-relaxed border-t border-zinc-850 pt-2 mt-1">
                           * Thêm key đăng ký SSI FCData (Consumer ID, Consumer Secret) vào mục <b>Settings &gt; Secrets</b> của nền tảng để tự động chuyển sang dữ liệu thực.
                         </div>
                       )}
+
+                      {/* Force sync button trigger */}
+                      <div className="border-t border-zinc-850 pt-2 mt-1 flex justify-end">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onManualRefresh();
+                          }}
+                          disabled={isSimulating}
+                          className="w-full flex items-center justify-center space-x-1.5 px-3 py-1.5 text-[10px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/15 hover:border-emerald-500/30 text-emerald-400 hover:text-emerald-300 rounded-lg transition-all disabled:opacity-45 disabled:cursor-not-allowed select-none"
+                        >
+                          <RefreshCw className={`h-2.5 w-2.5 shrink-0 ${isSimulating ? "animate-spin" : ""}`} />
+                          <span>{isSimulating ? "Đang đồng bộ..." : "Đồng bộ & Kết nối lại ngay"}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -252,9 +308,21 @@ export default function Header({
                   </div>
                 ) : (
                   <div className="flex items-center space-x-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    <span className="text-zinc-100 font-bold select-none max-w-[80px] truncate" title={currentUser || 'User'}>
-                      {currentUser}
+                    {typeof currentUser === 'object' && currentUser?.avatarUrl ? (
+                      <img 
+                        src={currentUser.avatarUrl} 
+                        referrerPolicy="no-referrer"
+                        alt="Avatar" 
+                        className="w-5.5 h-5.5 rounded-full object-cover border border-emerald-500/20 shadow-xs animate-fade-in shrink-0"
+                      />
+                    ) : (
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                    )}
+                    <span 
+                      className="text-zinc-100 font-bold select-none max-w-[125px] truncate" 
+                      title={typeof currentUser === 'object' ? currentUser.name || currentUser.email : currentUser || 'User'}
+                    >
+                      {typeof currentUser === 'object' ? currentUser.name : currentUser}
                     </span>
                     <button
                       onClick={onLogout}

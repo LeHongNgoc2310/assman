@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BrokerageAccount, PortfolioPosition, AlertRule, AlertNotification, MarketAsset, ImportHistoryItem, MarketIndex, ManualTransaction } from './types';
 import { initialDemoAccounts, initialDemoPositions, consolidatePositions } from './utils';
+import { getSupabaseClient, getAuthHeader } from './supabaseClient';
 import Header from './components/Header';
+import { AssetlyText } from './components/AssetlyLogo';
 import DashboardTab from './components/DashboardTab';
 import AccountsTab from './components/AccountsTab';
 import ImportDataTab from './components/ImportDataTab';
@@ -67,29 +69,96 @@ export default function App() {
   }, [activeTab]);
 
   // Auth States
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [isGuest, setIsGuest] = useState<boolean>(false);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
 
   // Load auth session on boot
   useEffect(() => {
+    const client = getSupabaseClient();
+    if (client) {
+      // 1. Check current Supabase session
+      client.auth.getSession().then(({ data: { session } }: any) => {
+        if (session && session.user) {
+          const user = session.user;
+          setCurrentUser({
+            name: user.user_metadata?.full_name || user.email || 'User',
+            avatarUrl: user.user_metadata?.avatar_url,
+            email: user.email
+          });
+          setIsGuest(false);
+          setShowAuthModal(false);
+        } else {
+          loadLocalAuth();
+        }
+      });
+
+      // 2. Auth State Change Listener
+      const { data: { subscription } } = client.auth.onAuthStateChange(
+        async (event: string, session: any) => {
+          if (event === 'SIGNED_IN' && session?.user) {
+            const user = session.user;
+            setCurrentUser({
+              name: user.user_metadata?.full_name || user.email || 'User',
+              avatarUrl: user.user_metadata?.avatar_url,
+              email: user.email
+            });
+            setIsGuest(false);
+            setShowAuthModal(false);
+          } else if (event === 'SIGNED_OUT') {
+            setCurrentUser(null);
+            setIsGuest(false);
+            setShowAuthModal(true);
+            localStorage.removeItem('assman_current_user');
+            localStorage.removeItem('assman_current_user_avatar');
+            localStorage.removeItem('assman_is_guest');
+          }
+        }
+      );
+      
+      return () => {
+        subscription.unsubscribe();
+      };
+    } else {
+      loadLocalAuth();
+    }
+  }, []);
+
+  const loadLocalAuth = () => {
     const savedUser = localStorage.getItem('assman_current_user');
     const savedGuest = localStorage.getItem('assman_is_guest');
+    const savedAvatar = localStorage.getItem('assman_current_user_avatar');
     if (savedUser) {
-      setCurrentUser(savedUser);
+      if (savedAvatar) {
+        setCurrentUser({
+          name: savedUser,
+          avatarUrl: savedAvatar,
+          email: 'demo.user@assetly.vn'
+        });
+      } else {
+        setCurrentUser(savedUser);
+      }
       setIsGuest(false);
     } else if (savedGuest === 'true') {
       setCurrentUser('Khách');
       setIsGuest(true);
     } else {
-      // Default to guest to skip prompting forever, but show dialog initially
       setCurrentUser(null);
       setIsGuest(false);
     }
-  }, []);
+  };
 
   const handleLoginSuccess = (username: string) => {
-    setCurrentUser(username);
+    const savedAvatar = localStorage.getItem('assman_current_user_avatar');
+    if (savedAvatar) {
+      setCurrentUser({
+        name: username,
+        avatarUrl: savedAvatar,
+        email: 'demo.user@assetly.vn'
+      });
+    } else {
+      setCurrentUser(username);
+    }
     setIsGuest(false);
     setShowAuthModal(false);
     localStorage.setItem('assman_current_user', username);
@@ -102,13 +171,23 @@ export default function App() {
     setShowAuthModal(false);
     localStorage.setItem('assman_is_guest', 'true');
     localStorage.removeItem('assman_current_user');
+    localStorage.removeItem('assman_current_user_avatar');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.auth.signOut();
+      } catch (err) {
+        console.warn('Supabase SignOut error', err);
+      }
+    }
     setCurrentUser(null);
     setIsGuest(false);
     setShowAuthModal(true);
     localStorage.removeItem('assman_current_user');
+    localStorage.removeItem('assman_current_user_avatar');
     localStorage.removeItem('assman_is_guest');
   };
 
@@ -265,7 +344,13 @@ export default function App() {
   const fetchMarketQuotes = async (force: boolean = false) => {
     setIsSimulatingPrice(true);
     try {
-      const response = await fetch(force ? '/api/market-data?force=true' : '/api/market-data');
+      const authHeaders = await getAuthHeader();
+      const response = await fetch(force ? '/api/market-data?force=true' : '/api/market-data', {
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
       if (!response.ok) {
         throw new Error("Mất kết nối với máy chủ VN Stock.");
       }
@@ -986,10 +1071,10 @@ export default function App() {
       {/* 4. Elegant Minimal Foot notes */}
       <footer className="bg-zinc-950 border-t border-zinc-900 py-6 text-center text-[10px] font-mono text-zinc-500 mt-12">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>Assetly Personal Asset Manager • MVP Release v1.0.4</p>
+          <p><AssetlyText className="text-[10px]" /> Personal Asset Manager • MVP Release v1.0.4</p>
           <p className="flex items-center space-x-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Assetly Core Engine v1.0.0 (Read-Only)</span>
+            <span><AssetlyText className="text-[10px]" /> Core Engine v1.0.0 (Read-Only)</span>
           </p>
         </div>
       </footer>

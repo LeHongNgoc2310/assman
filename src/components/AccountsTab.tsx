@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrokerageAccount, BrokerType, PortfolioPosition, ManualTransaction } from '../types';
 import { formatVND, formatShares } from '../utils';
 import { Plus, Trash2, Edit2, ShieldAlert, Check, Landmark, X, Settings, Receipt } from 'lucide-react';
+import { AssetlyText } from './AssetlyLogo';
 import ImportDataTab from './ImportDataTab';
 import AccountManageModal from './AccountManageModal';
 
@@ -201,7 +202,7 @@ export default function AccountsTab({
             <div className="text-xs pr-6">
               <p className="font-bold text-emerald-100">Cam kết bảo mật & An toàn tài sản (Read-Only Compliance)</p>
               <p className="text-zinc-400 mt-1 leading-relaxed">
-                Ứng dụng Assetly liên tục tuân thủ nguyên tắc <strong>chỉ đọc dữ liệu (read-only tracking)</strong>. Chúng tôi <strong>không bao giờ</strong> yêu cầu bạn nhập mật khẩu giao dịch hay chìa khóa API nhạy cảm của các công ty chứng khoán. Tất cả dữ liệu danh mục được bảo mật cục bộ và thuộc sở hữu hoàn toàn của bạn.
+                Ứng dụng <AssetlyText /> liên tục tuân thủ nguyên tắc <strong>chỉ đọc dữ liệu (read-only tracking)</strong>. Chúng tôi <strong>không bao giờ</strong> yêu cầu bạn nhập mật khẩu giao dịch hay chìa khóa API nhạy cảm của các công ty chứng khoán. Tất cả dữ liệu danh mục được bảo mật cục bộ và thuộc sở hữu hoàn toàn của bạn.
               </p>
             </div>
           </div>
